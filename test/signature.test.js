@@ -10,10 +10,14 @@ test("accepts an HMAC of the raw body", () => {
 });
 
 test("rejects a body that was re-serialized before verification", () => {
-  const original = '{"event":"order.paid","payload":{"ok":true}}';
+  const original = '{ "event" : "order.paid", "payload" : { "ok" : true } }';
   const signature = sign(original, webhookSecret);
   const reserialized = JSON.stringify(JSON.parse(original));
   assert.notEqual(original, reserialized);
+  assert.equal(
+    verifyWebhookSignature(Buffer.from(original), signature, webhookSecret),
+    true,
+  );
   assert.equal(
     verifyWebhookSignature(Buffer.from(reserialized), signature, webhookSecret),
     false,
