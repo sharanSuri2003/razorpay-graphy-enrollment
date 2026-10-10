@@ -1,0 +1,19 @@
+{
+  "name": "razorpay-graphy-enrollment",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Create Razorpay orders for courses and enroll paying learners on Graphy.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "razorpay": "^2.9.6"
+  }
+}

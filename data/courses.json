@@ -1,0 +1,14 @@
+[
+  {
+    "courseCode": "EXAMPLE-INTRO",
+    "graphyCourseCode": "EXAMPLE_GRAPHY_PRODUCT_ID_1",
+    "name": "Example: Introduction course (replace the Graphy product id)",
+    "price": 499
+  },
+  {
+    "courseCode": "EXAMPLE-ADVANCED",
+    "graphyCourseCode": "EXAMPLE_GRAPHY_PRODUCT_ID_2",
+    "name": "Example: Advanced course (replace the Graphy product id)",
+    "price": 1499
+  }
+]
