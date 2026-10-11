@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test"
+    "test": "node --test --test-concurrency=1 --test-force-exit"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

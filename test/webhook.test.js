@@ -6,7 +6,9 @@ import { createEnrollmentRepo } from "../src/enrollments.js";
 import { ENROLLMENTS, WEBHOOKS } from "../src/mongo.js";
 import { createWebhookLog } from "../src/webhookLog.js";
 import { listen, sign, testConfig } from "./helpers.js";
-import { createTestDb } from "./mongo.js";
+import { closeMongoAfterTests, createTestDb } from "./mongo.js";
+
+closeMongoAfterTests();
 
 const catalog = createCatalog([
   {
