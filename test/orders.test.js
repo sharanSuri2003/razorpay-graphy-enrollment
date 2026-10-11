@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createApp } from "../src/app.js";
 import { createCatalog } from "../src/courses.js";
-import { listen, tempStore, testConfig } from "./helpers.js";
+import { listen, testConfig, unusedRecords } from "./helpers.js";
 
 const catalog = createCatalog([
   {
@@ -39,7 +39,7 @@ function mockRazorpay() {
 
 async function withApp(fn) {
   const razorpay = mockRazorpay();
-  const storeFile = tempStore();
+  const records = unusedRecords();
   const app = createApp({
     config: testConfig(),
     courses: catalog,
@@ -55,14 +55,14 @@ async function withApp(fn) {
         throw new Error("graphy should not be called");
       },
     },
-    store: storeFile.store,
+    enrollments: records.enrollments,
+    webhookLog: records.webhookLog,
   });
   const server = await listen(app);
   try {
     await fn({ server, razorpay });
   } finally {
     await server.close();
-    storeFile.cleanup();
   }
 }
 
