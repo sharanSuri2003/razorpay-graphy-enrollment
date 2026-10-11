@@ -8,10 +8,12 @@ Requires Node.js 18 or newer.
 
 ```bash
 cp .env.example .env
-# fill in Razorpay and Graphy credentials
+# fill in Razorpay, Graphy, and MongoDB credentials
 npm install
 npm start
 ```
+
+MongoDB must be reachable at `MONGODB_URI` before the process starts. The driver uses its default pool. One client is created at startup and reused.
 
 The process listens on `PORT` (default `3000`).
 
@@ -29,8 +31,9 @@ The process listens on `PORT` (default `3000`).
 | `PORT` | no | HTTP port. Default `3000`. |
 | `GRAPHY_API_BASE_URL` | no | Default `https://api.ongraphy.com`. |
 | `CORS_ORIGIN` | no | If set, `POST /api/orders` allows that browser origin. |
+| `MONGODB_URI` | yes | MongoDB connection string. |
+| `MONGODB_DB` | yes | Database name. Collections `webhookEvents` and `enrollments` are created on startup. |
 | `COURSES_PATH` | no | Catalog file. Default `data/courses.json`. |
-| `ENROLLMENT_STORE_PATH` | no | File of payment ids already enrolled. Default `data/enrollments.json`. |
 
 Relative paths are resolved from the project root.
 
@@ -113,12 +116,14 @@ On a paid event the handler:
 
 1. Reads `courseCode`, `buyerEmail`, `buyerName`, and optional `buyerPhone` from the notes.
 2. Reads `graphyCourseCode` from those notes (the product id saved at checkout). If that note is missing, it falls back to the current catalog entry for `courseCode`.
-3. Skips Graphy if this payment id was already enrolled (Razorpay retries, and both events can arrive for one payment).
+3. Skips Graphy if this payment id was already enrolled (Razorpay retries, and both events can arrive for one payment). The guard is a unique index on `paymentId` in `enrollments`.
 4. Otherwise finds the learner (`GET /public/v1/learners?query={"email":"..."}`), creates them if missing (`POST /public/v1/learners`), and assigns the course (`POST /public/v1/assign` with `email` and `productId`).
 
-Success and duplicates respond `200`. A Graphy or Razorpay failure is logged with the payment id, order id, course, and email, the payment id is **not** stored, and the response is `500` so Razorpay retries. A later retry enrolls once.
+Every delivery is written to `webhookEvents` before it is acted on: raw body, parsed payload (or null), event name, `X-Razorpay-Event-Id`, the signature header, whether the signature matched, received time, and the processing status. Invalid signatures are stored too, with `signatureValid: false` and status `rejected`, and are not enrolled. A retry is another document; the event id is not unique.
 
-Enrollment state is `data/enrollments.json`. One process should own that file. Two servers with separate files can both enroll the same payment.
+`enrollments` holds one document per payment: payment id, order id, course code, Graphy product id, learner email, name, and phone, status `success` or `failed`, the Graphy response or error, attempt count, and timestamps. A successful payment is not enrolled again. A failed attempt stays in the collection and a later retry claims that row, increments `attempts`, and tries Graphy again.
+
+Success and duplicates respond `200`. A Graphy or Razorpay failure is logged with the payment id, order id, course, and email, the enrollment row is marked `failed`, and the response is `500` so Razorpay retries.
 
 ### Razorpay dashboard
 
@@ -161,10 +166,16 @@ The published Assign URL in that collection is the broken string `{/public/v1/as
 npm test
 ```
 
-Covers webhook signature checks (including a body that no longer matches after re-serialization), order creation with a mocked Razorpay client (catalog price wins over a client `price`), Graphy request shape, and webhook idempotency.
+Covers webhook signature checks (including a body that no longer matches after re-serialization), order creation with a mocked Razorpay client (catalog price wins over a client `price`), Graphy request shape, and webhook idempotency against MongoDB (via `mongodb-memory-server`).
+
+Indexes created on startup:
+
+| Collection | Index |
+| --- | --- |
+| `enrollments` | unique `paymentId` |
+| `webhookEvents` | `receivedAt` descending, and `razorpayEventId` (not unique) |
 
 ## Limitations
 
-- Single-process idempotency file. Restarting is safe; running two copies is not.
 - INR only.
-- A crash after Graphy accepts the assign and before the payment id is written can assign again on retry. Whether Graphy treats a second assign as a no-op is not documented.
+- A crash after Graphy accepts the assign and before the enrollment row is marked `success` leaves status `processing`. A retry sooner than two minutes is treated as in progress. After two minutes the row can be claimed again, which calls assign a second time. Whether Graphy treats that as a no-op is not documented.

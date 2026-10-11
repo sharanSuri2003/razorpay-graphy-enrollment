@@ -2,7 +2,14 @@ import express from "express";
 import { createOrderHandler } from "./orders.js";
 import { createWebhookHandler } from "./webhook.js";
 
-export function createApp({ config, courses, razorpay, graphy, store }) {
+export function createApp({
+  config,
+  courses,
+  razorpay,
+  graphy,
+  enrollments,
+  webhookLog,
+}) {
   const app = express();
   app.disable("x-powered-by");
 
@@ -25,7 +32,14 @@ export function createApp({ config, courses, razorpay, graphy, store }) {
   app.post(
     "/api/webhooks/razorpay",
     express.raw({ type: () => true, limit: "1mb" }),
-    createWebhookHandler({ config, courses, razorpay, graphy, store }),
+    createWebhookHandler({
+      config,
+      courses,
+      razorpay,
+      graphy,
+      enrollments,
+      webhookLog,
+    }),
   );
 
   app.use(express.json({ limit: "100kb" }));

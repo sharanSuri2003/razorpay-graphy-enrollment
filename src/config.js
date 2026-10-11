@@ -7,6 +7,8 @@ const REQUIRED = [
   "RAZORPAY_WEBHOOK_SECRET",
   "GRAPHY_MERCHANT_ID",
   "GRAPHY_API_TOKEN",
+  "MONGODB_URI",
+  "MONGODB_DB",
 ];
 
 export function projectRoot() {
@@ -42,10 +44,8 @@ export function loadConfig(env = process.env) {
       env.GRAPHY_API_BASE_URL || "https://api.ongraphy.com",
     ).replace(/\/$/, ""),
     coursesPath: resolveFromRoot(env.COURSES_PATH, "data/courses.json"),
-    enrollmentStorePath: resolveFromRoot(
-      env.ENROLLMENT_STORE_PATH,
-      "data/enrollments.json",
-    ),
+    mongoUri: String(env.MONGODB_URI ?? "").trim(),
+    mongoDb: String(env.MONGODB_DB ?? "").trim(),
     corsOrigin: String(env.CORS_ORIGIN ?? "").trim(),
   };
 }

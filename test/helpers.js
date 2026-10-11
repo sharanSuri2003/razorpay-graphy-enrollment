@@ -1,10 +1,6 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { createEnrollmentStore } from "../src/enrollmentStore.js";
 
 export const webhookSecret = "whsec_test_secret";
 
@@ -18,7 +14,8 @@ export function testConfig(overrides = {}) {
     graphyApiToken: "graphy_token_test",
     graphyApiBaseUrl: "https://api.ongraphy.com",
     coursesPath: "",
-    enrollmentStorePath: "",
+    mongoUri: "mongodb://127.0.0.1:27017",
+    mongoDb: "course_checkout_test",
     corsOrigin: "",
     ...overrides,
   };
@@ -43,14 +40,12 @@ export async function listen(app) {
   };
 }
 
-export function tempStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "enroll-"));
-  const filePath = path.join(dir, "enrollments.json");
+export function unusedRecords() {
+  const fail = async () => {
+    throw new Error("mongo records should not be used");
+  };
   return {
-    filePath,
-    store: createEnrollmentStore(filePath),
-    cleanup() {
-      fs.rmSync(dir, { recursive: true, force: true });
-    },
+    enrollments: { claim: fail, markSuccess: fail, markFailed: fail },
+    webhookLog: { record: fail, complete: fail },
   };
 }
