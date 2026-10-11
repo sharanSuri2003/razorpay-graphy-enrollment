@@ -1,3 +1,4 @@
+import test from "node:test";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { MongoClient } from "mongodb";
 import { ensureIndexes } from "../src/mongo.js";
@@ -14,6 +15,22 @@ function start() {
     })();
   }
   return started;
+}
+
+export async function stopMongo() {
+  if (!started) return;
+  const current = started;
+  started = undefined;
+  const { mongod, client } = await current;
+  await client.close();
+  await mongod.stop();
+}
+
+/** Call from each test file that uses createTestDb. Files run one at a time. */
+export function closeMongoAfterTests() {
+  test.after(async () => {
+    await stopMongo();
+  });
 }
 
 export async function createTestDb() {

@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createEnrollmentRepo } from "../src/enrollments.js";
 import { ENROLLMENTS } from "../src/mongo.js";
-import { createTestDb } from "./mongo.js";
+import { closeMongoAfterTests, createTestDb } from "./mongo.js";
+
+closeMongoAfterTests();
 
 const details = {
   paymentId: "pay_unique",
