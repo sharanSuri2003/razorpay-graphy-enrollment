@@ -9,15 +9,12 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test --test-concurrency=1 --test-force-exit"
+    "recover": "node src/recover.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "mongodb": "^6.20.0",
     "razorpay": "^2.9.6"
-  },
-  "devDependencies": {
-    "mongodb-memory-server": "^10.2.3"
   }
 }

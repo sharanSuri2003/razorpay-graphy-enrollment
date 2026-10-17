@@ -8,14 +8,12 @@ Requires Node.js 18 or newer.
 
 ```bash
 cp .env.example .env
-# fill in Razorpay, Graphy, and MongoDB credentials
+# fill in Razorpay and Graphy credentials
 npm install
 npm start
 ```
 
-MongoDB must be reachable at `MONGODB_URI` before the process starts. The driver uses its default pool. One client is created at startup and reused.
-
-The process listens on `PORT` (default `3000`).
+The process listens on `PORT` (default `3000`). It does not store payments or enrollments. Graphy is called when a valid paid webhook arrives, and again by the recovery job for recent captured payments.
 
 `GET /health` returns `{ "ok": true }`.
 
@@ -30,9 +28,14 @@ The process listens on `PORT` (default `3000`).
 | `GRAPHY_API_TOKEN` | yes | Graphy API token (`key`). Same screen. Advanced plan only. |
 | `PORT` | no | HTTP port. Default `3000`. |
 | `GRAPHY_API_BASE_URL` | no | Default `https://api.ongraphy.com`. |
+| `GRAPHY_RETRY_ATTEMPTS` | no | Tries per Graphy call, including the first. Default `3`. |
+| `GRAPHY_RETRY_BASE_DELAY_MS` | no | First backoff delay. Each later wait is double. Default `500`. |
+| `GRAPHY_REQUEST_TIMEOUT_MS` | no | Per-attempt timeout. Default `10000`. |
+| `RECOVERY_ENABLED` | no | In-process recovery job. Default `true`. Set `false` when cron runs `npm run recover`. |
+| `RECOVERY_INTERVAL_MS` | no | In-process interval. Default `600000` (10 minutes). |
+| `RECOVERY_WINDOW_MS` | no | How far back a run looks. Default `600000`. |
+| `RECOVERY_OVERLAP_MS` | no | Extra lookback so a payment on the window edge is seen again. Default `120000`. |
 | `CORS_ORIGIN` | no | If set, `POST /api/orders` allows that browser origin. |
-| `MONGODB_URI` | yes | MongoDB connection string. |
-| `MONGODB_DB` | yes | Database name. Collections `webhookEvents` and `enrollments` are created on startup. |
 | `COURSES_PATH` | no | Catalog file. Default `data/courses.json`. |
 
 Relative paths are resolved from the project root.
@@ -112,18 +115,11 @@ Handled events:
 
 Other events are acknowledged with `200` and ignored.
 
-On a paid event the handler:
+On a paid event the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and optional `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then finds or creates the learner and assigns the course. There is no local record and no check that this payment was already handled, so `payment.captured` and `order.paid` for the same payment each enroll.
 
-1. Reads `courseCode`, `buyerEmail`, `buyerName`, and optional `buyerPhone` from the notes.
-2. Reads `graphyCourseCode` from those notes (the product id saved at checkout). If that note is missing, it falls back to the current catalog entry for `courseCode`.
-3. Skips Graphy if this payment id was already enrolled (Razorpay retries, and both events can arrive for one payment). The guard is a unique index on `paymentId` in `enrollments`.
-4. Otherwise finds the learner (`GET /public/v1/learners?query={"email":"..."}`), creates them if missing (`POST /public/v1/learners`), and assigns the course (`POST /public/v1/assign` with `email` and `productId`).
+A bad signature is `400`. Other events are `200` and ignored. Graphy or Razorpay failures are logged with the payment id, order id, course, and email, and the response is `500` so Razorpay can deliver the webhook again. Nothing is saved when that happens.
 
-Every delivery is written to `webhookEvents` before it is acted on: raw body, parsed payload (or null), event name, `X-Razorpay-Event-Id`, the signature header, whether the signature matched, received time, and the processing status. Invalid signatures are stored too, with `signatureValid: false` and status `rejected`, and are not enrolled. A retry is another document; the event id is not unique.
-
-`enrollments` holds one document per payment: payment id, order id, course code, Graphy product id, learner email, name, and phone, status `success` or `failed`, the Graphy response or error, attempt count, and timestamps. A successful payment is not enrolled again. A failed attempt stays in the collection and a later retry claims that row, increments `attempts`, and tries Graphy again.
-
-Success and duplicates respond `200`. A Graphy or Razorpay failure is logged with the payment id, order id, course, and email, the enrollment row is marked `failed`, and the response is `500` so Razorpay retries.
+Each Graphy HTTP call is retried on a network error, timeout, HTTP 429, or HTTP 5xx. The wait is `GRAPHY_RETRY_BASE_DELAY_MS`, then double that, and so on. A Graphy `200` with `status: "failure"` is not retried. Every failed attempt is logged with the attempt number and status.
 
 ### Razorpay dashboard
 
@@ -160,22 +156,45 @@ Documented in [Graphy REST API (24 Aug 2021)](https://documenter.getpostman.com/
 
 The published Assign URL in that collection is the broken string `{/public/v1/assign`. This service calls `https://api.ongraphy.com/public/v1/assign`, matching the path segments and `POST /public/v1/unassign`.
 
+### Is this learner already enrolled?
+
+`GET /public/v1/learners` and `GET /public/v1/learners/:id` accept `courseInfo=true`, described as “course progress and enrollment information”. Every example response in that collection is only email, id, name, mobile, and login dates. There is no sample course object and no field name.
+
+Recovery still sends `courseInfo=true`. If the learner object has an array under `courses`, `enrollments`, `products`, or the other list names in `src/enrollmentCheck.js`, a matching product id means already enrolled and an empty list means not enrolled. If the list call has no such array, recovery loads the learner by id with `courseInfo=true` and looks again.
+
+If neither payload has a course list, enrollment is unknown. Recovery logs that and assigns anyway, because a paid learner with a failed webhook is the case this job exists for.
+
+`GET /t/api/public/v3/products/activelearners` was not used. It lists learners active between two dates, not everyone enrolled in the product.
+
+## Recovery
+
+Each run asks Razorpay for payments created in the last `RECOVERY_WINDOW_MS` plus `RECOVERY_OVERLAP_MS` (defaults: 10 minutes and 2 minutes). Captured payments are kept. For each one the order notes supply the course and buyer, same as the webhook. If Graphy shows the learner on that product, the payment is skipped. Otherwise the learner is enrolled, with the same Graphy retries. One learner's failure is logged and the run continues. Nothing is written on this server.
+
+The overlap means a payment that lands on the boundary is visible to two on-time runs. It does not cover a long outage: a payment older than the window is not revisited.
+
+Two ways to run it. Use one of them, not both, or the same payment can be assigned twice while both runs still think the learner is missing.
+
+**In process.** `RECOVERY_ENABLED` defaults to true. `npm start` runs recovery once at startup and then every `RECOVERY_INTERVAL_MS` on `setInterval`. The timer does not keep the process alive by itself.
+
+**External cron.** Set `RECOVERY_ENABLED=false` on the web process and schedule:
+
+```cron
+*/10 * * * * cd /path/to/app && npm run recover
+```
+
+`npm run recover` runs one pass and exits. Exit code is `1` when any payment in that pass failed (notes could not be read, or Graphy still failed after retries). Individual failures are logged with payment id, course, and email.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-Covers webhook signature checks (including a body that no longer matches after re-serialization), order creation with a mocked Razorpay client (catalog price wins over a client `price`), Graphy request shape, and webhook idempotency against MongoDB (via `mongodb-memory-server`).
-
-Indexes created on startup:
-
-| Collection | Index |
-| --- | --- |
-| `enrollments` | unique `paymentId` |
-| `webhookEvents` | `receivedAt` descending, and `razorpayEventId` (not unique) |
+Covers webhook signature checks (including a body that no longer matches after re-serialization), order creation with a mocked Razorpay client (catalog price wins over a client `price`), Graphy request shape, Graphy retries, and the recovery job against mocked Razorpay and Graphy clients.
 
 ## Limitations
 
 - INR only.
-- A crash after Graphy accepts the assign and before the enrollment row is marked `success` leaves status `processing`. A retry sooner than two minutes is treated as in progress. After two minutes the row can be claimed again, which calls assign a second time. Whether Graphy treats that as a no-op is not documented.
+- No stored idempotency. A second paid webhook for the same payment enrolls again. Whether Graphy treats a second assign as a no-op is not documented.
+- When Graphy omits the course list, recovery assigns even if the webhook already succeeded. With the default window and interval, that payment is only considered for about twelve minutes.
+- Create sends `sendEmail=true` and no password, so Graphy generates one and emails login details.
