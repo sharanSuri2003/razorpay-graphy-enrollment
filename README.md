@@ -108,16 +108,11 @@ The order is created with notes the webhook reads later: `courseCode`, `graphyCo
 
 Razorpay calls this. Verify the signature against the **raw** body before trusting the JSON.
 
-Handled events:
+The only event that enrolls is `payment.captured`. Its payload has the payment only. Notes on the payment are often empty, so the handler loads the order with the Razorpay API and reads the notes saved at order creation. Every other event, including `order.paid`, is acknowledged with `200` and does not call Graphy.
 
-- `payment.captured` — payload has the payment only. Notes on the payment are often empty, so the handler loads the order with the Razorpay API and reads the notes saved at order creation.
-- `order.paid` — payload includes the order, so notes are read from the order entity.
+On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and optional `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then finds or creates the learner and assigns the course. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again.
 
-Other events are acknowledged with `200` and ignored.
-
-On a paid event the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and optional `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then finds or creates the learner and assigns the course. There is no local record and no check that this payment was already handled, so `payment.captured` and `order.paid` for the same payment each enroll.
-
-A bad signature is `400`. Other events are `200` and ignored. Graphy or Razorpay failures are logged with the payment id, order id, course, and email, and the response is `500` so Razorpay can deliver the webhook again. Nothing is saved when that happens.
+A bad signature is `400`. Graphy or Razorpay failures are logged with the payment id, order id, course, and email, and the response is `500` so Razorpay can deliver the webhook again. Nothing is saved when that happens.
 
 Each Graphy HTTP call is retried on a network error, timeout, HTTP 429, or HTTP 5xx. The wait is `GRAPHY_RETRY_BASE_DELAY_MS`, then double that, and so on. A Graphy `200` with `status: "failure"` is not retried. Every failed attempt is logged with the attempt number and status.
 
@@ -126,7 +121,7 @@ Each Graphy HTTP call is retried on a network error, timeout, HTTP 429, or HTTP 
 1. Settings → Webhooks → Add new webhook.
 2. URL: `https://<your-host>/api/webhooks/razorpay` (a tunnel such as ngrok works locally).
 3. Secret: the same value as `RAZORPAY_WEBHOOK_SECRET`.
-4. Active events: `payment.captured` and `order.paid`.
+4. Active events: subscribe only to `payment.captured`. Do not enable `order.paid` or other payment events. Any other event this endpoint receives is acknowledged and ignored.
 5. Save, then use the dashboard "send test webhook" only as a connectivity check. A test ping will not contain our order notes, so it will not enroll anyone. Place a test-mode payment against an order created by `POST /api/orders` to exercise enrollment.
 
 Signature check locally (export `RAZORPAY_WEBHOOK_SECRET` first):
@@ -195,6 +190,6 @@ Covers webhook signature checks (including a body that no longer matches after r
 ## Limitations
 
 - INR only.
-- No stored idempotency. A second paid webhook for the same payment enrolls again. Whether Graphy treats a second assign as a no-op is not documented.
+- No stored idempotency. A second `payment.captured` for the same payment enrolls again. Whether Graphy treats a second assign as a no-op is not documented.
 - When Graphy omits the course list, recovery assigns even if the webhook already succeeded. With the default window and interval, that payment is only considered for about twelve minutes.
 - Create sends `sendEmail=true` and no password, so Graphy generates one and emails login details.

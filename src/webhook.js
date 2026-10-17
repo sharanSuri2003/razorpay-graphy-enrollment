@@ -2,7 +2,7 @@ import { enrollLearner } from "./enroll.js";
 import { purchaseReady, resolvePurchase } from "./purchase.js";
 import { verifyWebhookSignature } from "./signature.js";
 
-const SUCCESS_EVENTS = new Set(["payment.captured", "order.paid"]);
+const CAPTURED = "payment.captured";
 
 function parsePayload(rawBody) {
   try {
@@ -37,7 +37,7 @@ export function createWebhookHandler({ config, courses, razorpay, graphy }) {
       return res.status(400).json({ error: "Invalid JSON" });
     }
 
-    if (!SUCCESS_EVENTS.has(event.event)) {
+    if (event.event !== CAPTURED) {
       return res.status(200).json({ ok: true, ignored: true });
     }
 
