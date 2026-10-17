@@ -2,37 +2,42 @@ import "dotenv/config";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { loadCourses } from "./courses.js";
-import { createEnrollmentRepo } from "./enrollments.js";
 import { createGraphyClient } from "./graphyClient.js";
-import { connectMongo, ENROLLMENTS, WEBHOOKS } from "./mongo.js";
 import { createRazorpayClient } from "./razorpayClient.js";
-import { createWebhookLog } from "./webhookLog.js";
+import { runRecovery } from "./recovery.js";
 
 const config = loadConfig();
 const courses = loadCourses(config.coursesPath);
-const { client, db } = await connectMongo(config);
-
-const app = createApp({
-  config,
-  courses,
-  razorpay: createRazorpayClient(config),
-  graphy: createGraphyClient(config),
-  enrollments: createEnrollmentRepo(db.collection(ENROLLMENTS)),
-  webhookLog: createWebhookLog(db.collection(WEBHOOKS)),
+const razorpay = createRazorpayClient(config);
+const graphy = createGraphyClient({
+  ...config,
+  retryAttempts: config.graphyRetryAttempts,
+  retryBaseDelayMs: config.graphyRetryBaseDelayMs,
+  requestTimeoutMs: config.graphyRequestTimeoutMs,
 });
+
+const app = createApp({ config, courses, razorpay, graphy });
 
 const server = app.listen(config.port, () => {
   console.log(`Listening on port ${config.port}`);
 });
 
-async function shutdown() {
-  server.close();
-  await client.close();
+if (config.recoveryEnabled) {
+  const run = () => {
+    runRecovery({ config, razorpay, graphy, courses }).catch((err) => {
+      console.error("[recovery] run failed", { message: err.message });
+    });
+  };
+  run();
+  const timer = setInterval(run, config.recoveryIntervalMs);
+  timer.unref();
+} else {
+  console.log("[recovery] in-process job disabled");
 }
 
-process.on("SIGINT", () => {
-  shutdown().finally(() => process.exit(0));
-});
-process.on("SIGTERM", () => {
-  shutdown().finally(() => process.exit(0));
-});
+function shutdown() {
+  server.close(() => process.exit(0));
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

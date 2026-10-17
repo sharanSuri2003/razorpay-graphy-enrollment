@@ -14,9 +14,14 @@ export function testConfig(overrides = {}) {
     graphyApiToken: "graphy_token_test",
     graphyApiBaseUrl: "https://api.ongraphy.com",
     coursesPath: "",
-    mongoUri: "mongodb://127.0.0.1:27017",
-    mongoDb: "course_checkout_test",
     corsOrigin: "",
+    graphyRetryAttempts: 3,
+    graphyRetryBaseDelayMs: 500,
+    graphyRequestTimeoutMs: 10_000,
+    recoveryEnabled: false,
+    recoveryIntervalMs: 600_000,
+    recoveryWindowMs: 600_000,
+    recoveryOverlapMs: 120_000,
     ...overrides,
   };
 }
@@ -37,15 +42,5 @@ export async function listen(app) {
         server.close((err) => (err ? reject(err) : resolve()));
       });
     },
-  };
-}
-
-export function unusedRecords() {
-  const fail = async () => {
-    throw new Error("mongo records should not be used");
-  };
-  return {
-    enrollments: { claim: fail, markSuccess: fail, markFailed: fail },
-    webhookLog: { record: fail, complete: fail },
   };
 }
