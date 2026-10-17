@@ -12,6 +12,9 @@
  * {base}/public/v1/assign.
  */
 
+import { enrollmentFromLearner } from "./enrollmentCheck.js";
+import { withRetry } from "./retry.js";
+
 function redact(message, secret) {
   if (!secret) return String(message);
   return String(message).split(secret).join("[redacted]");
@@ -32,6 +35,10 @@ export function createGraphyClient({
   graphyApiToken,
   graphyApiBaseUrl,
   fetchImpl = fetch,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  retryAttempts = 3,
+  retryBaseDelayMs = 500,
+  requestTimeoutMs = 10_000,
 }) {
   const baseUrl = graphyApiBaseUrl.replace(/\/$/, "");
 
@@ -53,27 +60,54 @@ export function createGraphyClient({
   }
 
   function assertSuccess(action, response, parsed) {
-    if (!response.ok) {
-      fail(action, response, parsed);
-    }
+    if (!response.ok) fail(action, response, parsed);
     const status = parsed.json?.status;
     if (typeof status === "string" && status.toLowerCase() !== "success") {
       fail(action, response, parsed);
     }
   }
 
-  async function findLearnerByEmail(email) {
+  async function send(action, url, options) {
+    return withRetry(
+      async () => {
+        let response;
+        try {
+          response = await fetchImpl(url, {
+            ...options,
+            signal: AbortSignal.timeout(requestTimeoutMs),
+          });
+        } catch (err) {
+          const wrapped = new Error(redact(err.message, graphyApiToken));
+          wrapped.name = err.name;
+          wrapped.code = err.code || err.cause?.code;
+          wrapped.cause = err;
+          throw wrapped;
+        }
+        const parsed = await readBody(response);
+        if (response.status === 429 || response.status >= 500) {
+          fail(action, response, parsed);
+        }
+        return { response, parsed };
+      },
+      {
+        attempts: retryAttempts,
+        baseDelayMs: retryBaseDelayMs,
+        sleep,
+        label: action,
+      },
+    );
+  }
+
+  async function findLearnerByEmail(email, { courseInfo = false } = {}) {
     const url = new URL(`${baseUrl}/public/v1/learners`);
     url.searchParams.set("mid", graphyMerchantId);
     url.searchParams.set("key", graphyApiToken);
     url.searchParams.set("limit", "10");
     url.searchParams.set("query", JSON.stringify({ email }));
+    if (courseInfo) url.searchParams.set("courseInfo", "true");
 
-    const response = await fetchImpl(url, { method: "GET" });
-    const parsed = await readBody(response);
-    if (!response.ok) {
-      fail("find learner", response, parsed);
-    }
+    const { response, parsed } = await send("find learner", url, { method: "GET" });
+    if (!response.ok) fail("find learner", response, parsed);
     const list = Array.isArray(parsed.json?.data) ? parsed.json.data : [];
     return (
       list.find(
@@ -83,6 +117,19 @@ export function createGraphyClient({
     );
   }
 
+  async function getLearnerById(learnerId) {
+    const url = new URL(
+      `${baseUrl}/public/v1/learners/${encodeURIComponent(learnerId)}`,
+    );
+    url.searchParams.set("mid", graphyMerchantId);
+    url.searchParams.set("key", graphyApiToken);
+    url.searchParams.set("courseInfo", "true");
+
+    const { response, parsed } = await send("get learner", url, { method: "GET" });
+    if (!response.ok) fail("get learner", response, parsed);
+    return parsed.json;
+  }
+
   async function createLearner({ email, name, mobile }) {
     const body = new URLSearchParams();
     body.set("mid", graphyMerchantId);
@@ -90,15 +137,13 @@ export function createGraphyClient({
     body.set("email", email);
     body.set("name", name);
     if (mobile) body.set("mobile", mobile);
-    // Documented default is true: email the learner their login details.
     body.set("sendEmail", "true");
 
-    const response = await fetchImpl(`${baseUrl}/public/v1/learners`, {
+    const { response, parsed } = await send("create learner", `${baseUrl}/public/v1/learners`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    const parsed = await readBody(response);
     assertSuccess("create learner", response, parsed);
     return parsed.json;
   }
@@ -110,15 +155,30 @@ export function createGraphyClient({
     body.set("email", email);
     body.set("productId", productId);
 
-    const response = await fetchImpl(`${baseUrl}/public/v1/assign`, {
+    const { response, parsed } = await send("assign course", `${baseUrl}/public/v1/assign`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    const parsed = await readBody(response);
     assertSuccess("assign course", response, parsed);
     return parsed.json;
   }
 
-  return { findLearnerByEmail, createLearner, assignCourse };
+  /**
+   * true / false when the payload answers the question.
+   * null when the learner exists but neither the list nor the by-id call
+   * includes a course list (the published examples look like that).
+   */
+  async function isEnrolled(email, productId) {
+    const listed = await findLearnerByEmail(email, { courseInfo: true });
+    if (!listed) return false;
+    const fromList = enrollmentFromLearner(listed, productId);
+    if (fromList !== null) return fromList;
+    if (!listed.id) return null;
+    const full = await getLearnerById(listed.id);
+    const fromId = enrollmentFromLearner(full, productId);
+    return fromId === null ? null : fromId;
+  }
+
+  return { findLearnerByEmail, getLearnerById, createLearner, assignCourse, isEnrolled };
 }

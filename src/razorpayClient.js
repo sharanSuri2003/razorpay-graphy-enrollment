@@ -16,5 +16,10 @@ export function createRazorpayClient({ razorpayKeyId, razorpayKeySecret }) {
         return client.orders.fetch(orderId);
       },
     },
+    payments: {
+      all(params) {
+        return client.payments.all(params);
+      },
+    },
   };
 }
