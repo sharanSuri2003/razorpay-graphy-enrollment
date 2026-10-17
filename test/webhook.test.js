@@ -129,14 +129,15 @@ test("enrolls from payment.captured by fetching order notes", async () => {
   });
 });
 
-test("enrolls an existing learner from order.paid without creating them", async () => {
+test("enrolls an existing learner from payment.captured notes without creating them", async () => {
   await withApp(async ({ server, graphy, fetched }) => {
     graphy.setLearners([{ id: "learner_9", email: "learner@example.com" }]);
     const event = {
-      event: "order.paid",
+      event: "payment.captured",
       payload: {
-        payment: { entity: { id: "pay_456", order_id: "order_456", notes: [] } },
-        order: { entity: { id: "order_456", status: "paid", notes } },
+        payment: {
+          entity: { id: "pay_456", order_id: "order_456", status: "captured", notes },
+        },
       },
     };
 
@@ -152,7 +153,7 @@ test("enrolls an existing learner from order.paid without creating them", async 
 });
 
 test("rejects a bad signature and ignores unrelated events", async () => {
-  await withApp(async ({ server, graphy }) => {
+  await withApp(async ({ server, graphy, fetched }) => {
     const paid = {
       event: "payment.captured",
       payload: {
@@ -167,6 +168,18 @@ test("rejects a bad signature and ignores unrelated events", async () => {
     assert.equal(ignored.response.status, 200);
     assert.equal(ignored.body.ignored, true);
     assert.equal(graphy.calls.length, 0);
+
+    const orderPaid = await postWebhook(server.url, {
+      event: "order.paid",
+      payload: {
+        payment: { entity: { id: "pay_order", order_id: "order_paid", notes } },
+        order: { entity: { id: "order_paid", status: "paid", notes } },
+      },
+    });
+    assert.equal(orderPaid.response.status, 200);
+    assert.equal(orderPaid.body.ignored, true);
+    assert.equal(graphy.calls.length, 0);
+    assert.equal(fetched.length, 0);
   });
 });
 
@@ -180,10 +193,11 @@ test("returns 500 when Graphy assign fails and a later delivery tries again", as
     };
 
     const event = {
-      event: "order.paid",
+      event: "payment.captured",
       payload: {
-        payment: { entity: { id: "pay_retry", notes: [] } },
-        order: { entity: { id: "order_retry", notes } },
+        payment: {
+          entity: { id: "pay_retry", order_id: "order_retry", status: "captured", notes },
+        },
       },
     };
 
