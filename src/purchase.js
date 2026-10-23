@@ -1,3 +1,5 @@
+export const PHONE_RE = /^\+[1-9]\d{7,14}$/;
+
 function notesOf(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value;
@@ -22,7 +24,8 @@ export async function resolvePurchase({ payment, order, razorpay, courses }) {
     !text(notes.courseCode) ||
     !text(notes.graphyCourseCode) ||
     !text(notes.buyerEmail) ||
-    !text(notes.buyerName);
+    !text(notes.buyerName) ||
+    !PHONE_RE.test(text(notes.buyerPhone));
   if (incomplete && orderId && razorpay?.orders?.fetch) {
     const fetched = await razorpay.orders.fetch(orderId);
     notes = { ...notes, ...notesOf(fetched?.notes) };
@@ -53,4 +56,14 @@ export function purchaseReady(purchase) {
       purchase.buyer?.email &&
       purchase.buyer?.name,
   );
+}
+
+/** Null when buyerPhone can be sent to Graphy. A retry cannot fill this in. */
+export function buyerPhoneError(purchase) {
+  const phone = purchase?.buyer?.phone ?? "";
+  if (!phone) return "buyerPhone is missing from the order notes";
+  if (!PHONE_RE.test(phone)) {
+    return "buyerPhone in the order notes must include a country code, for example +919876543210";
+  }
+  return null;
 }

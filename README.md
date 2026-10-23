@@ -74,7 +74,7 @@ curl -s -X POST http://localhost:3000/api/orders \
   }'
 ```
 
-`phone` is optional. When present it must include a country code (`+919876543210`), which is the form Graphy expects for `mobile`.
+`phone` is required. It must include a country code (`+919876543210`), which is the form Graphy expects for `mobile`. A missing or invalid phone is `400` with an error message, and no Razorpay order is created.
 
 Response `201`:
 
@@ -100,13 +100,13 @@ Checkout (browser) uses that payload:
     amount: payload.amount,
     currency: payload.currency,
     name: "Courses",
-    prefill: { email: "learner@example.com", name: "Asha Rao" },
+    prefill: { email: "learner@example.com", name: "Asha Rao", contact: "+919876543210" },
   });
   checkout.open();
 </script>
 ```
 
-The order is created with notes the webhook reads later: `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone` when the buyer sent one.
+The order is created with notes the webhook reads later: `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone`.
 
 ## Webhook
 
@@ -116,7 +116,9 @@ Razorpay calls this. Verify the signature against the **raw** body before trusti
 
 The only event that enrolls is `payment.captured`. Its payload has the payment only. Notes on the payment are often empty, so the handler loads the order with the Razorpay API and reads the notes saved at order creation. Every other event, including `order.paid`, is acknowledged with `200` and does not call Graphy.
 
-On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and optional `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then finds or creates the learner and assigns the course. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again.
+On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then finds or creates the learner and assigns the course. Creating a learner always sends `buyerPhone` as `mobile`. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again.
+
+If `buyerPhone` is missing or not a country-code number, the handler does not call Graphy. It logs the payment id, order id, course, and email, and responds `200` with `{ "ok": true, "skipped": true, "reason": "..." }`. A Razorpay retry cannot add a phone that was never stored on the order.
 
 A bad signature is `400`. Graphy or Razorpay failures are logged with the payment id, order id, course, and email, and the response is `500` so Razorpay can deliver the webhook again. Nothing is saved when that happens.
 
@@ -150,7 +152,7 @@ Documented in [Graphy REST API (24 Aug 2021)](https://documenter.getpostman.com/
 | Step | Request |
 | --- | --- |
 | Find learner | `GET /public/v1/learners?mid&key&limit=10&query={"email":"<email>"}` |
-| Create learner | `POST /public/v1/learners` form body: `mid`, `key`, `email`, `name`, optional `mobile`, `sendEmail=true` |
+| Create learner | `POST /public/v1/learners` form body: `mid`, `key`, `email`, `name`, `mobile` (the buyer phone), `sendEmail=true` |
 | Assign course | `POST /public/v1/assign` form body: `mid`, `key`, `email`, `productId` |
 
 `productId` is `graphyCourseCode` from the catalog. Create does not return a learner id in the documented example (`{ "status": "success" }`); assign uses the email. `sendEmail=true` asks Graphy to email login details. No password is sent, so Graphy generates one.
@@ -169,7 +171,7 @@ If neither payload has a course list, enrollment is unknown. Recovery logs that 
 
 ## Recovery
 
-Each run asks Razorpay for payments created in the last `RECOVERY_WINDOW_MS` plus `RECOVERY_OVERLAP_MS` (defaults: 10 minutes and 2 minutes). Captured payments are kept. For each one the order notes supply the course and buyer, same as the webhook. If Graphy shows the learner on that product, the payment is skipped. Otherwise the learner is enrolled, with the same Graphy retries. One learner's failure is logged and the run continues. Nothing is written on this server.
+Each run asks Razorpay for payments created in the last `RECOVERY_WINDOW_MS` plus `RECOVERY_OVERLAP_MS` (defaults: 10 minutes and 2 minutes). Captured payments are kept. For each one the order notes supply the course and buyer, same as the webhook. A captured payment with a missing or invalid `buyerPhone` is not sent to Graphy. It is logged with the payment id, order id, course, and email, and counted as a failure. If Graphy shows the learner on that product, the payment is skipped. Otherwise the learner is enrolled, with the same Graphy retries, and create always sends the phone as `mobile`. One learner's failure is logged and the run continues. Nothing is written on this server.
 
 The overlap means a payment that lands on the boundary is visible to two on-time runs. It does not cover a long outage: a payment older than the window is not revisited.
 
@@ -183,7 +185,7 @@ Two ways to run it. Use one of them, not both, or the same payment can be assign
 */10 * * * * cd /path/to/app && npm run recover
 ```
 
-`npm run recover` runs one pass and exits. Exit code is `1` when any payment in that pass failed (notes could not be read, or Graphy still failed after retries). Individual failures are logged with payment id, course, and email.
+`npm run recover` runs one pass and exits. Exit code is `1` when any payment in that pass failed (notes could not be read, `buyerPhone` was missing or invalid, or Graphy still failed after retries). Individual failures are logged with payment id, course, and email.
 
 ## Tests
 
@@ -199,3 +201,4 @@ Covers webhook signature checks (including a body that no longer matches after r
 - No stored idempotency. A second `payment.captured` for the same payment enrolls again. Whether Graphy treats a second assign as a no-op is not documented.
 - When Graphy omits the course list, recovery assigns even if the webhook already succeeded. With the default window and interval, that payment is only considered for about twelve minutes.
 - Create sends `sendEmail=true` and no password, so Graphy generates one and emails login details.
+- `buyerPhone` is required. A captured payment whose notes have no valid phone is not enrolled, and the webhook does not ask Razorpay to retry it. An existing Graphy learner is not updated with the phone; `mobile` is sent only when the learner is created.

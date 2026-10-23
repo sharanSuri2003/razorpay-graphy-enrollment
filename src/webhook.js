@@ -1,5 +1,5 @@
 import { enrollLearner } from "./enroll.js";
-import { purchaseReady, resolvePurchase } from "./purchase.js";
+import { buyerPhoneError, purchaseReady, resolvePurchase } from "./purchase.js";
 import { verifyWebhookSignature } from "./signature.js";
 
 const CAPTURED = "payment.captured";
@@ -67,6 +67,18 @@ export function createWebhookHandler({ config, courses, razorpay, graphy }) {
         email: purchase.buyer.email || null,
       });
       return res.status(500).json({ error: "Enrollment failed" });
+    }
+
+    const phoneError = buyerPhoneError(purchase);
+    if (phoneError) {
+      console.error(`[webhook] not enrolling: ${phoneError}`, {
+        paymentId: purchase.paymentId,
+        orderId: purchase.orderId,
+        courseCode: purchase.courseCode,
+        graphyCourseCode: purchase.graphyCourseCode,
+        email: purchase.buyer.email,
+      });
+      return res.status(200).json({ ok: true, skipped: true, reason: phoneError });
     }
 
     try {

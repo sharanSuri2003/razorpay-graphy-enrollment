@@ -12,7 +12,7 @@ export async function enrollLearner({ graphy, course, buyer }) {
       createResponse = await graphy.createLearner({
         email: buyer.email,
         name: buyer.name,
-        mobile: buyer.phone || undefined,
+        mobile: buyer.phone,
       });
     } catch (err) {
       // A concurrent create, or a lookup miss, can mean the learner already

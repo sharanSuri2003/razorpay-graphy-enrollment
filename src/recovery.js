@@ -1,5 +1,5 @@
 import { enrollLearner } from "./enroll.js";
-import { purchaseReady, resolvePurchase } from "./purchase.js";
+import { buyerPhoneError, purchaseReady, resolvePurchase } from "./purchase.js";
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 20;
@@ -76,6 +76,19 @@ export async function runRecovery({
         orderId: purchase.orderId || null,
         courseCode: purchase.courseCode || null,
         email: purchase.buyer?.email || null,
+      });
+      continue;
+    }
+
+    const phoneError = buyerPhoneError(purchase);
+    if (phoneError) {
+      summary.failed += 1;
+      log.error(`[recovery] not enrolling: ${phoneError}`, {
+        paymentId: purchase.paymentId,
+        orderId: purchase.orderId,
+        courseCode: purchase.courseCode,
+        graphyCourseCode: purchase.graphyCourseCode,
+        email: purchase.buyer.email,
       });
       continue;
     }

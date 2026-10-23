@@ -131,12 +131,15 @@ export function createGraphyClient({
   }
 
   async function createLearner({ email, name, mobile }) {
+    if (typeof mobile !== "string" || mobile.trim() === "") {
+      throw new Error("mobile is required");
+    }
     const body = new URLSearchParams();
     body.set("mid", graphyMerchantId);
     body.set("key", graphyApiToken);
     body.set("email", email);
     body.set("name", name);
-    if (mobile) body.set("mobile", mobile);
+    body.set("mobile", mobile.trim());
     body.set("sendEmail", "true");
 
     const { response, parsed } = await send("create learner", `${baseUrl}/public/v1/learners`, {

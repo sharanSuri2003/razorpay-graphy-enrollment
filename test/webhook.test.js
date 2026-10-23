@@ -50,6 +50,7 @@ function graphyMock() {
 async function withApp(fn) {
   const graphy = graphyMock();
   const fetched = [];
+  let orderNotes = notes;
   const razorpay = {
     keyId: "rzp_test_key",
     orders: {
@@ -58,7 +59,7 @@ async function withApp(fn) {
       },
       async fetch(orderId) {
         fetched.push(orderId);
-        return { id: orderId, notes };
+        return { id: orderId, notes: orderNotes };
       },
     },
   };
@@ -70,7 +71,14 @@ async function withApp(fn) {
   });
   const server = await listen(app);
   try {
-    await fn({ server, graphy, fetched });
+    await fn({
+      server,
+      graphy,
+      fetched,
+      setOrderNotes(next) {
+        orderNotes = next;
+      },
+    });
   } finally {
     await server.close();
   }
@@ -114,6 +122,11 @@ test("enrolls from payment.captured by fetching order notes", async () => {
       graphy.calls.map((call) => call.op),
       ["find", "create", "assign"],
     );
+    assert.deepEqual(graphy.calls[1].input, {
+      email: "learner@example.com",
+      name: "Asha Rao",
+      mobile: "+919876543210",
+    });
     assert.deepEqual(graphy.calls[2].input, {
       email: "learner@example.com",
       productId: "prod_intro_1",
@@ -149,6 +162,51 @@ test("enrolls an existing learner from payment.captured notes without creating t
       graphy.calls.map((call) => call.op),
       ["find", "assign"],
     );
+  });
+});
+
+test("does not call Graphy when buyerPhone is missing or invalid", async () => {
+  await withApp(async ({ server, graphy, fetched, setOrderNotes }) => {
+    setOrderNotes({ ...notes, buyerPhone: "" });
+    const missing = await postWebhook(server.url, {
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_nophone",
+            order_id: "order_nophone",
+            status: "captured",
+            notes: [],
+          },
+        },
+      },
+    });
+    assert.equal(missing.response.status, 200);
+    assert.equal(missing.body.ok, true);
+    assert.equal(missing.body.skipped, true);
+    assert.match(missing.body.reason, /buyerPhone is missing/);
+    assert.deepEqual(fetched, ["order_nophone"]);
+    assert.equal(graphy.calls.length, 0);
+
+    setOrderNotes({ ...notes, buyerPhone: "9876543210" });
+    const invalid = await postWebhook(server.url, {
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_badphone",
+            order_id: "order_badphone",
+            status: "captured",
+            notes: { ...notes, buyerPhone: "9876543210" },
+          },
+        },
+      },
+    });
+    assert.equal(invalid.response.status, 200);
+    assert.equal(invalid.body.skipped, true);
+    assert.match(invalid.body.reason, /country code/);
+    assert.deepEqual(fetched, ["order_nophone", "order_badphone"]);
+    assert.equal(graphy.calls.length, 0);
   });
 });
 

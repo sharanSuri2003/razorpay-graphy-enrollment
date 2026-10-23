@@ -1,5 +1,6 @@
+import { PHONE_RE } from "./purchase.js";
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_RE = /^\+[1-9]\d{7,14}$/;
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -26,9 +27,9 @@ export function createOrderHandler({ courses, razorpay }) {
     if (!name || name.length > 120) {
       return res.status(400).json({ error: "name is required (max 120 characters)" });
     }
-    if (phone && !PHONE_RE.test(phone)) {
+    if (!phone || !PHONE_RE.test(phone)) {
       return res.status(400).json({
-        error: "phone must include a country code, for example +919876543210",
+        error: "phone is required and must include a country code, for example +919876543210",
       });
     }
 
@@ -42,8 +43,8 @@ export function createOrderHandler({ courses, razorpay }) {
       graphyCourseCode: course.graphyCourseCode,
       buyerEmail: email,
       buyerName: name,
+      buyerPhone: phone,
     };
-    if (phone) notes.buyerPhone = phone;
 
     try {
       const order = await razorpay.orders.create({

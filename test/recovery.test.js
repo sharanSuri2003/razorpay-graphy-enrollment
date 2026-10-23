@@ -101,6 +101,8 @@ test("recovery enrolls captured payments that are not already on the course", as
             captured("pay_new"),
             captured("pay_mystery"),
             captured("pay_blank"),
+            captured("pay_nophone"),
+            captured("pay_badphone"),
             { id: "pay_auth", status: "authorized", order_id: "order_auth", notes: [] },
           ],
         };
@@ -112,9 +114,14 @@ test("recovery enrolls captured payments that are not already on the course", as
         const emails = {
           order_pay_new: "new@example.com",
           order_pay_mystery: "mystery@example.com",
+          order_pay_nophone: "nophone@example.com",
+          order_pay_badphone: "badphone@example.com",
         };
         if (!emails[orderId]) return { id: orderId, notes: {} };
-        return { id: orderId, notes: { ...buyer, buyerEmail: emails[orderId] } };
+        const notes = { ...buyer, buyerEmail: emails[orderId] };
+        if (orderId === "order_pay_nophone") delete notes.buyerPhone;
+        if (orderId === "order_pay_badphone") notes.buyerPhone = "9876543210";
+        return { id: orderId, notes };
       },
     },
   };
@@ -131,7 +138,7 @@ test("recovery enrolls captured payments that are not already on the course", as
       return null;
     },
     async createLearner(input) {
-      calls.push({ op: "create", email: input.email });
+      calls.push({ op: "create", email: input.email, mobile: input.mobile });
       return { status: "success" };
     },
     async assignCourse(input) {
@@ -157,11 +164,11 @@ test("recovery enrolls captured payments that are not already on the course", as
   assert.equal(pages[1].skip, 100);
 
   assert.deepEqual(summary, {
-    scanned: 4,
+    scanned: 6,
     enrolled: 2,
     alreadyEnrolled: 1,
     skipped: 1,
-    failed: 0,
+    failed: 2,
     from: "2026-06-01T11:48:00.000Z",
     to: "2026-06-01T12:00:00.000Z",
   });
@@ -170,5 +177,13 @@ test("recovery enrolls captured payments that are not already on the course", as
     calls.filter((call) => call.op === "assign").map((call) => call.email).sort(),
     ["mystery@example.com", "new@example.com"],
   );
+  assert.deepEqual(
+    calls.filter((call) => call.op === "create").map((call) => call.mobile),
+    ["+919876543210", "+919876543210"],
+  );
   assert.equal(calls.some((call) => call.op === "assign" && call.email === "known@example.com"), false);
+  assert.equal(
+    calls.some((call) => String(call.email).endsWith("phone@example.com")),
+    false,
+  );
 });

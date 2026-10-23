@@ -106,6 +106,7 @@ test("rejects an unknown course and a missing email", async () => {
         courseCode: "NOPE",
         email: "learner@example.com",
         name: "Asha Rao",
+        phone: "+919876543210",
         price: 99999,
       }),
     });
@@ -119,5 +120,40 @@ test("rejects an unknown course and a missing email", async () => {
     });
     assert.equal(missing.status, 400);
     assert.equal(razorpay.created.length, 0);
+  });
+});
+
+test("requires a phone with a country code and stores it on the order", async () => {
+  await withApp(async ({ server, razorpay }) => {
+    const buyer = {
+      courseCode: "EXAMPLE-INTRO",
+      email: "learner@example.com",
+      name: "Asha Rao",
+    };
+
+    const missing = await fetch(`${server.url}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buyer),
+    });
+    assert.equal(missing.status, 400);
+    assert.match((await missing.json()).error, /phone is required/);
+
+    const invalid = await fetch(`${server.url}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...buyer, phone: "9876543210" }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.match((await invalid.json()).error, /country code/);
+    assert.equal(razorpay.created.length, 0);
+
+    const created = await fetch(`${server.url}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...buyer, phone: " +919876543210 " }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(razorpay.created[0].notes.buyerPhone, "+919876543210");
   });
 });
