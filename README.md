@@ -49,9 +49,15 @@ Relative paths are resolved from the project root.
 | `courseCode` | Our id. The checkout request sends this. |
 | `graphyCourseCode` | Graphy **product id** of the course or package. Sent as `productId` to `POST /public/v1/assign`. |
 | `name` | Display name. |
-| `price` | Price in **INR rupees** (paise allowed, for example `499` or `499.5`). The client never sends the price. |
+| `price` | Price in **INR rupees** (up to 2 decimal places, for example `1999` or `1999.50`). The client never sends the price. |
 
-The two entries shipped in the file are examples. Replace `graphyCourseCode` with real product ids from Graphy before taking live payments. Razorpay is charged in paise (`price * 100`), currency `INR`.
+The file is the live catalog. Only these courses can be bought. Razorpay is charged in paise (`price * 100`), currency `INR`.
+
+| `courseCode` | Course | `price` (INR) | Charged amount (paise) |
+| --- | --- | ---: | ---: |
+| `CFBC` | Capsicum Farming Business Course | 1999 | 199900 |
+| `HSFBC` | How to Start Farming Business Course | 2499 | 249900 |
+| `TFBC` | Tomato Farming Business Course | 1999 | 199900 |
 
 ## Create an order
 
@@ -61,7 +67,7 @@ The two entries shipped in the file are examples. Replace `graphyCourseCode` wit
 curl -s -X POST http://localhost:3000/api/orders \
   -H 'Content-Type: application/json' \
   -d '{
-    "courseCode": "EXAMPLE-INTRO",
+    "courseCode": "CFBC",
     "email": "learner@example.com",
     "name": "Asha Rao",
     "phone": "+919876543210"
@@ -75,7 +81,7 @@ Response `201`:
 ```json
 {
   "orderId": "order_ABC123",
-  "amount": 49900,
+  "amount": 199900,
   "currency": "INR",
   "keyId": "rzp_test_..."
 }
