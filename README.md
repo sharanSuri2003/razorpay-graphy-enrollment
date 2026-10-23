@@ -35,7 +35,7 @@ The process listens on `PORT` (default `3000`). It does not store payments or en
 | `RECOVERY_INTERVAL_MS` | no | In-process interval. Default `600000` (10 minutes). |
 | `RECOVERY_WINDOW_MS` | no | How far back a run looks. Default `600000`. |
 | `RECOVERY_OVERLAP_MS` | no | Extra lookback so a payment on the window edge is seen again. Default `120000`. |
-| `CORS_ORIGIN` | no | If set, `POST /api/orders` allows that browser origin. |
+| `CORS_ORIGIN` | no | Comma-separated browser origins. A request whose `Origin` exactly matches one of them gets that origin in `Access-Control-Allow-Origin`, with `Vary: Origin`. Any other origin gets no CORS allow header. Example: `CORS_ORIGIN=https://kropiq.in,https://www.kropiq.in`. |
 | `COURSES_PATH` | no | Catalog file. Default `data/courses.json`. |
 
 Relative paths are resolved from the project root.

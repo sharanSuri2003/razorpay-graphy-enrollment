@@ -30,6 +30,14 @@ function integerInRange(value, fallback, name, { min, max }) {
   return parsed;
 }
 
+export function parseCorsOrigins(value) {
+  const origins = String(value ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return [...new Set(origins)];
+}
+
 function resolveFromRoot(value, fallback) {
   const chosen = value && String(value).trim() ? String(value).trim() : fallback;
   return path.isAbsolute(chosen) ? chosen : path.join(projectRoot(), chosen);
@@ -59,7 +67,7 @@ export function loadConfig(env = process.env) {
       env.GRAPHY_API_BASE_URL || "https://api.ongraphy.com",
     ).replace(/\/$/, ""),
     coursesPath: resolveFromRoot(env.COURSES_PATH, "data/courses.json"),
-    corsOrigin: String(env.CORS_ORIGIN ?? "").trim(),
+    corsOrigins: parseCorsOrigins(env.CORS_ORIGIN),
     graphyRetryAttempts: integerInRange(
       env.GRAPHY_RETRY_ATTEMPTS,
       3,

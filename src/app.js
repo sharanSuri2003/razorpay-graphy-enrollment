@@ -6,12 +6,16 @@ export function createApp({ config, courses, razorpay, graphy }) {
   const app = express();
   app.disable("x-powered-by");
 
-  if (config.corsOrigin) {
+  const corsOrigins = new Set(config.corsOrigins ?? []);
+  if (corsOrigins.size > 0) {
     app.use((req, res, next) => {
-      res.setHeader("Access-Control-Allow-Origin", config.corsOrigin);
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      const origin = req.get("origin");
       res.setHeader("Vary", "Origin");
+      if (origin && corsOrigins.has(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      }
       if (req.method === "OPTIONS") {
         res.sendStatus(204);
         return;

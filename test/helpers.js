@@ -14,7 +14,7 @@ export function testConfig(overrides = {}) {
     graphyApiToken: "graphy_token_test",
     graphyApiBaseUrl: "https://api.ongraphy.com",
     coursesPath: "",
-    corsOrigin: "",
+    corsOrigins: [],
     graphyRetryAttempts: 3,
     graphyRetryBaseDelayMs: 500,
     graphyRequestTimeoutMs: 10_000,
