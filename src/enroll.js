@@ -1,11 +1,21 @@
+function graphyCode(err) {
+  const code = Number(err?.graphyCode);
+  return Number.isInteger(code) ? code : null;
+}
+
 /**
- * Find the learner by email, create them if Graphy has no match, then assign
- * the course. Assign is POST /public/v1/assign with the Graphy product id.
- * Create-learner does not return an id in the documented response, and assign
- * identifies the learner by email, so the id is not required.
+ * Assign the course to the Graphy account that already owns this email, or
+ * this mobile when the mobile is registered to someone else.
+ *
+ * 1. An email match is assigned directly.
+ * 2. Otherwise create the learner. Error 22 means the email exists; assign it.
+ * 3. Error 25 means the mobile is already registered. Assign the account
+ *    returned by a mobile lookup, or fail if that lookup finds nobody.
  */
-export async function enrollLearner({ graphy, course, buyer }) {
+export async function enrollLearner({ graphy, course, buyer, log = console }) {
   let createResponse = null;
+  let assignedEmail = buyer.email;
+
   const existing = await graphy.findLearnerByEmail(buyer.email);
   if (!existing) {
     try {
@@ -15,11 +25,34 @@ export async function enrollLearner({ graphy, course, buyer }) {
         mobile: buyer.phone,
       });
     } catch (err) {
-      // A concurrent create, or a lookup miss, can mean the learner already
-      // exists. Assign still works by email if a second lookup finds them.
-      const again = await graphy.findLearnerByEmail(buyer.email).catch(() => null);
-      if (!again) {
-        err.graphyResponse = { create: null, assign: null };
+      const code = graphyCode(err);
+      if (code === 22) {
+        log.log("[graphy] account already exists for this email; assigning it", {
+          email: buyer.email,
+          courseCode: course.courseCode,
+        });
+      } else if (code === 25) {
+        const byMobile = await graphy.findLearnerByMobile(buyer.phone);
+        const existingEmail = byMobile?.email ? String(byMobile.email).trim() : "";
+        if (!existingEmail) {
+          const error = new Error(
+            `Mobile ${buyer.phone} is already registered in Graphy, but no learner was found for it. Not assigning. Payment email: ${buyer.email}.`,
+          );
+          error.graphyCode = 25;
+          error.cause = err;
+          throw error;
+        }
+        assignedEmail = existingEmail;
+        log.warn(
+          "[graphy] mobile is already registered; assigning the existing account",
+          {
+            paymentEmail: buyer.email,
+            existingEmail,
+            mobile: buyer.phone,
+            courseCode: course.courseCode,
+          },
+        );
+      } else {
         throw err;
       }
     }
@@ -28,7 +61,7 @@ export async function enrollLearner({ graphy, course, buyer }) {
   let assignResponse;
   try {
     assignResponse = await graphy.assignCourse({
-      email: buyer.email,
+      email: assignedEmail,
       productId: course.graphyCourseCode,
     });
   } catch (err) {
@@ -37,6 +70,7 @@ export async function enrollLearner({ graphy, course, buyer }) {
   }
 
   return {
+    assignedEmail,
     graphyResponse: {
       create: createResponse,
       assign: assignResponse ?? null,

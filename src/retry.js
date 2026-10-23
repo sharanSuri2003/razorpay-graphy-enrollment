@@ -17,7 +17,7 @@ export function retryDelayMs(failedAttempt, baseDelayMs) {
 
 /**
  * Retry network failures, timeouts, HTTP 429, and HTTP 5xx.
- * A Graphy body with status "failure" on HTTP 200 is not retried.
+ * A Graphy HTTP 200 with an error object, or status other than "success", is not retried.
  */
 export function isRetryableGraphyError(err) {
   const status = err?.statusCode;

@@ -85,6 +85,98 @@ test("finds, creates, and assigns with the documented Graphy contract", async ()
   assert.equal(assigned.get("mid"), "mid_test");
 });
 
+test("treats an HTTP 200 error object as a failure and does not retry it", async () => {
+  let calls = 0;
+  const { fetchImpl } = mockFetch(async () => {
+    calls += 1;
+    return jsonResponse(200, {
+      error: { code: 22, message: "Account exists for email : learner@example.com" },
+    });
+  });
+  const graphy = createGraphyClient({
+    graphyMerchantId: "mid_test",
+    graphyApiToken: "token_test",
+    graphyApiBaseUrl: "https://api.ongraphy.com",
+    retryAttempts: 3,
+    retryBaseDelayMs: 10,
+    sleep: async () => {
+      throw new Error("should not sleep");
+    },
+    fetchImpl,
+  });
+
+  await assert.rejects(
+    () =>
+      graphy.createLearner({
+        email: "learner@example.com",
+        name: "Asha Rao",
+        mobile: "+919876543210",
+      }),
+    (err) => {
+      assert.equal(err.statusCode, 200);
+      assert.equal(err.graphyCode, 22);
+      assert.match(err.message, /Account exists for email/);
+      assert.match(err.message, /code 22/);
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
+test("reads error code 25 from an HTTP 200 body", async () => {
+  const { fetchImpl } = mockFetch(async () =>
+    jsonResponse(200, {
+      error: {
+        code: 25,
+        message: "This mobile number is already registered. Please use a different number.",
+      },
+    }),
+  );
+  const graphy = createGraphyClient({
+    graphyMerchantId: "mid_test",
+    graphyApiToken: "token_test",
+    graphyApiBaseUrl: "https://api.ongraphy.com",
+    retryAttempts: 1,
+    fetchImpl,
+  });
+
+  await assert.rejects(
+    () =>
+      graphy.createLearner({
+        email: "learner@example.com",
+        name: "Asha Rao",
+        mobile: "+919876543210",
+      }),
+    (err) => {
+      assert.equal(err.graphyCode, 25);
+      assert.equal(err.statusCode, 200);
+      assert.match(err.message, /already registered/);
+      return true;
+    },
+  );
+});
+
+test("finds a learner by mobile", async () => {
+  const { requests, fetchImpl } = mockFetch(async () =>
+    jsonResponse(200, {
+      data: [{ id: "learner_9", email: "other@example.com", mobile: "+919876543210" }],
+      total: 1,
+    }),
+  );
+  const graphy = createGraphyClient({
+    graphyMerchantId: "mid_test",
+    graphyApiToken: "token_test",
+    graphyApiBaseUrl: "https://api.ongraphy.com",
+    fetchImpl,
+  });
+
+  const learner = await graphy.findLearnerByMobile("+919876543210");
+  assert.equal(learner.email, "other@example.com");
+  assert.deepEqual(JSON.parse(new URL(requests[0].url).searchParams.get("query")), {
+    mobile: "+919876543210",
+  });
+});
+
 test("treats a non-success Graphy status as a failure and redacts the token", async () => {
   const { fetchImpl } = mockFetch(async () =>
     jsonResponse(200, { status: "failure", message: "bad key token_test" }),

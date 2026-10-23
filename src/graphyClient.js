@@ -43,26 +43,35 @@ export function createGraphyClient({
   const baseUrl = graphyApiBaseUrl.replace(/\/$/, "");
 
   function fail(action, response, parsed) {
+    const bodyError = parsed.json?.error;
+    const graphyCode =
+      bodyError && typeof bodyError === "object" ? bodyError.code : undefined;
     const detail =
+      (bodyError && typeof bodyError === "object" ? bodyError.message : null) ||
       parsed.json?.message ||
-      parsed.json?.error ||
+      (typeof bodyError === "string" ? bodyError : null) ||
       parsed.json?.response ||
       parsed.text ||
       response.statusText;
+    const codeLabel = graphyCode == null ? "" : `, code ${graphyCode}`;
     const error = new Error(
       redact(
-        `Graphy ${action} failed (${response.status}): ${String(detail).slice(0, 500)}`,
+        `Graphy ${action} failed (${response.status}${codeLabel}): ${String(detail).slice(0, 500)}`,
         graphyApiToken,
       ),
     );
     error.statusCode = response.status;
+    if (graphyCode != null) error.graphyCode = graphyCode;
     throw error;
   }
 
   function assertSuccess(action, response, parsed) {
     if (!response.ok) fail(action, response, parsed);
+    if (parsed.json?.error && typeof parsed.json.error === "object") {
+      fail(action, response, parsed);
+    }
     const status = parsed.json?.status;
-    if (typeof status === "string" && status.toLowerCase() !== "success") {
+    if (typeof status !== "string" || status.toLowerCase() !== "success") {
       fail(action, response, parsed);
     }
   }
@@ -87,6 +96,14 @@ export function createGraphyClient({
         if (response.status === 429 || response.status >= 500) {
           fail(action, response, parsed);
         }
+        // Business errors are HTTP 200 with an `error` object. Do not retry them.
+        if (
+          response.ok &&
+          parsed.json?.error &&
+          typeof parsed.json.error === "object"
+        ) {
+          fail(action, response, parsed);
+        }
         return { response, parsed };
       },
       {
@@ -98,36 +115,37 @@ export function createGraphyClient({
     );
   }
 
-  async function findLearnerByEmail(email, { courseInfo = false } = {}) {
+  async function findLearners(query, { courseInfo = false } = {}) {
     const url = new URL(`${baseUrl}/public/v1/learners`);
     url.searchParams.set("mid", graphyMerchantId);
     url.searchParams.set("key", graphyApiToken);
     url.searchParams.set("limit", "10");
-    url.searchParams.set("query", JSON.stringify({ email }));
+    url.searchParams.set("query", JSON.stringify(query));
     if (courseInfo) url.searchParams.set("courseInfo", "true");
 
     const { response, parsed } = await send("find learner", url, { method: "GET" });
     if (!response.ok) fail("find learner", response, parsed);
-    const list = Array.isArray(parsed.json?.data) ? parsed.json.data : [];
+    return Array.isArray(parsed.json?.data) ? parsed.json.data : [];
+  }
+
+  async function findLearnerByEmail(email, options) {
+    const list = await findLearners({ email }, options);
     return (
       list.find(
         (learner) =>
-          String(learner?.email ?? "").toLowerCase() === email.toLowerCase(),
+          String(learner?.email ?? "").toLowerCase() === String(email).toLowerCase(),
       ) ?? null
     );
   }
 
-  async function getLearnerById(learnerId) {
-    const url = new URL(
-      `${baseUrl}/public/v1/learners/${encodeURIComponent(learnerId)}`,
-    );
-    url.searchParams.set("mid", graphyMerchantId);
-    url.searchParams.set("key", graphyApiToken);
-    url.searchParams.set("courseInfo", "true");
-
-    const { response, parsed } = await send("get learner", url, { method: "GET" });
-    if (!response.ok) fail("get learner", response, parsed);
-    return parsed.json;
+  async function findLearnerByMobile(mobile, options) {
+    const list = await findLearners({ mobile }, options);
+    const exact = list.find((learner) => String(learner?.mobile ?? "") === mobile);
+    if (exact) return exact;
+    if (list.length === 1 && (list[0].mobile == null || list[0].mobile === "")) {
+      return list[0];
+    }
+    return null;
   }
 
   async function createLearner({ email, name, mobile }) {
@@ -168,20 +186,26 @@ export function createGraphyClient({
   }
 
   /**
-   * true / false when the payload answers the question.
-   * null when the learner exists but neither the list nor the by-id call
-   * includes a course list (the published examples look like that).
+   * true when the resolved learner's `courses` includes this product id.
+   * false when nobody matches, or `courses` is present and does not include it.
+   * null when the learner exists but `courses` itself is absent.
+   * Email is checked first. Mobile is the account create would hit on error 25.
    */
-  async function isEnrolled(email, productId) {
-    const listed = await findLearnerByEmail(email, { courseInfo: true });
-    if (!listed) return false;
-    const fromList = enrollmentFromLearner(listed, productId);
-    if (fromList !== null) return fromList;
-    if (!listed.id) return null;
-    const full = await getLearnerById(listed.id);
-    const fromId = enrollmentFromLearner(full, productId);
-    return fromId === null ? null : fromId;
+  async function isEnrolled({ email, mobile, productId }) {
+    const byEmail = await findLearnerByEmail(email, { courseInfo: true });
+    if (byEmail) return enrollmentFromLearner(byEmail, productId);
+    if (mobile) {
+      const byMobile = await findLearnerByMobile(mobile, { courseInfo: true });
+      if (byMobile) return enrollmentFromLearner(byMobile, productId);
+    }
+    return false;
   }
 
-  return { findLearnerByEmail, getLearnerById, createLearner, assignCourse, isEnrolled };
+  return {
+    findLearnerByEmail,
+    findLearnerByMobile,
+    createLearner,
+    assignCourse,
+    isEnrolled,
+  };
 }

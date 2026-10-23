@@ -26,23 +26,27 @@ const buyer = {
   buyerPhone: "+919876543210",
 };
 
-test("enrollment check uses a course list when Graphy sends one", () => {
+test("enrollment check uses courses[].id", () => {
   assert.equal(enrollmentFromLearner(null, "prod_intro_1"), false);
   assert.equal(
     enrollmentFromLearner(
-      { email: "a@b.c", courses: [{ productId: "prod_intro_1" }] },
+      {
+        email: "a@b.c",
+        courses: [{ id: "prod_intro_1", Title: "Intro", "Assigned Date": "2026-01-01" }],
+      },
       "prod_intro_1",
     ),
     true,
   );
   assert.equal(
-    enrollmentFromLearner({ email: "a@b.c", courses: [] }, "prod_intro_1"),
+    enrollmentFromLearner({ email: "a@b.c", courses: [{ productId: "prod_intro_1" }] }, "prod_intro_1"),
     false,
   );
+  assert.equal(enrollmentFromLearner({ email: "a@b.c", courses: [] }, "prod_intro_1"), false);
   assert.equal(enrollmentFromLearner({ email: "a@b.c", id: "learner_1" }, "prod_intro_1"), null);
 });
 
-test("isEnrolled asks for courseInfo and falls back to learner by id", async () => {
+test("isEnrolled reads courses from the email lookup, then the mobile lookup", async () => {
   const seen = [];
   const graphy = createGraphyClient({
     graphyMerchantId: "mid",
@@ -52,28 +56,79 @@ test("isEnrolled asks for courseInfo and falls back to learner by id", async () 
     sleep: async () => {},
     fetchImpl: async (url) => {
       const parsed = new URL(String(url));
-      seen.push(`${parsed.pathname}?courseInfo=${parsed.searchParams.get("courseInfo")}`);
-      const body = parsed.pathname.endsWith("/learner_1")
-        ? { id: "learner_1", email: "learner@example.com", courses: ["prod_intro_1"] }
-        : {
-            data: [{ id: "learner_1", email: "learner@example.com" }],
-            total: 1,
-          };
+      const query = JSON.parse(parsed.searchParams.get("query"));
+      seen.push({ query, courseInfo: parsed.searchParams.get("courseInfo") });
+      let data = [];
+      if (query.email === "learner@example.com") {
+        data = [
+          {
+            id: "learner_1",
+            email: "learner@example.com",
+            courses: [{ id: "68c7a2dce149ff7f37b37bbe", Title: "How to Start Farming" }],
+          },
+        ];
+      } else if (query.email === "empty@example.com") {
+        data = [{ id: "learner_2", email: "empty@example.com", courses: [] }];
+      } else if (query.email === "missing-field@example.com") {
+        data = [{ id: "learner_3", email: "missing-field@example.com" }];
+      } else if (query.mobile === "+919876543210") {
+        data = [
+          {
+            id: "learner_4",
+            email: "other@example.com",
+            mobile: "+919876543210",
+            courses: [{ id: "prod_intro_1", Title: "Intro" }],
+          },
+        ];
+      }
       return {
         ok: true,
         status: 200,
         statusText: "OK",
         async text() {
-          return JSON.stringify(body);
+          return JSON.stringify({ data, total: data.length });
         },
       };
     },
   });
 
-  assert.equal(await graphy.isEnrolled("learner@example.com", "prod_intro_1"), true);
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "learner@example.com",
+      mobile: "+919876543210",
+      productId: "68c7a2dce149ff7f37b37bbe",
+    }),
+    true,
+  );
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "empty@example.com",
+      mobile: "+919876543210",
+      productId: "prod_intro_1",
+    }),
+    false,
+  );
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "missing-field@example.com",
+      productId: "prod_intro_1",
+    }),
+    null,
+  );
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "new@example.com",
+      mobile: "+919876543210",
+      productId: "prod_intro_1",
+    }),
+    true,
+  );
   assert.deepEqual(seen, [
-    "/public/v1/learners?courseInfo=true",
-    "/public/v1/learners/learner_1?courseInfo=true",
+    { query: { email: "learner@example.com" }, courseInfo: "true" },
+    { query: { email: "empty@example.com" }, courseInfo: "true" },
+    { query: { email: "missing-field@example.com" }, courseInfo: "true" },
+    { query: { email: "new@example.com" }, courseInfo: "true" },
+    { query: { mobile: "+919876543210" }, courseInfo: "true" },
   ]);
 });
 
@@ -127,7 +182,7 @@ test("recovery enrolls captured payments that are not already on the course", as
   };
 
   const graphy = {
-    async isEnrolled(email, productId) {
+    async isEnrolled({ email, productId }) {
       calls.push({ op: "isEnrolled", email, productId });
       if (email === "known@example.com") return true;
       if (email === "mystery@example.com") return null;
@@ -153,7 +208,7 @@ test("recovery enrolls captured payments that are not already on the course", as
     graphy,
     courses: catalog,
     now: () => now,
-    log: { log() {}, error() {} },
+    log: { log() {}, error() {}, warn() {} },
   });
 
   assert.equal(pages.length, 2);

@@ -82,7 +82,7 @@ export function createWebhookHandler({ config, courses, razorpay, graphy }) {
     }
 
     try {
-      await enrollLearner({
+      const enrollment = await enrollLearner({
         graphy,
         course: {
           courseCode: purchase.courseCode,
@@ -95,7 +95,8 @@ export function createWebhookHandler({ config, courses, razorpay, graphy }) {
         orderId: purchase.orderId,
         courseCode: purchase.courseCode,
         graphyCourseCode: purchase.graphyCourseCode,
-        email: purchase.buyer.email,
+        email: enrollment.assignedEmail,
+        paymentEmail: purchase.buyer.email,
       });
       return res.status(200).json({ ok: true, enrolled: true });
     } catch (err) {

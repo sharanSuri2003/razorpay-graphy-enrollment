@@ -116,13 +116,13 @@ Razorpay calls this. Verify the signature against the **raw** body before trusti
 
 The only event that enrolls is `payment.captured`. Its payload has the payment only. Notes on the payment are often empty, so the handler loads the order with the Razorpay API and reads the notes saved at order creation. Every other event, including `order.paid`, is acknowledged with `200` and does not call Graphy.
 
-On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then finds or creates the learner and assigns the course. Creating a learner always sends `buyerPhone` as `mobile`. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again.
+On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then enrolls the learner as described under Graphy calls. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again.
 
 If `buyerPhone` is missing or not a country-code number, the handler does not call Graphy. It logs the payment id, order id, course, and email, and responds `200` with `{ "ok": true, "skipped": true, "reason": "..." }`. A Razorpay retry cannot add a phone that was never stored on the order.
 
 A bad signature is `400`. Graphy or Razorpay failures are logged with the payment id, order id, course, and email, and the response is `500` so Razorpay can deliver the webhook again. Nothing is saved when that happens.
 
-Each Graphy HTTP call is retried on a network error, timeout, HTTP 429, or HTTP 5xx. The wait is `GRAPHY_RETRY_BASE_DELAY_MS`, then double that, and so on. A Graphy `200` with `status: "failure"` is not retried. Every failed attempt is logged with the attempt number and status.
+Each Graphy HTTP call is retried on a network error, timeout, HTTP 429, or HTTP 5xx. The wait is `GRAPHY_RETRY_BASE_DELAY_MS`, then double that, and so on. An HTTP 200 body with an `error` object, or any body whose `status` is not `"success"`, is a business failure and is not retried. Every failed attempt is logged with the attempt number and status.
 
 ### Razorpay dashboard
 
@@ -151,27 +151,35 @@ Documented in [Graphy REST API (24 Aug 2021)](https://documenter.getpostman.com/
 
 | Step | Request |
 | --- | --- |
-| Find learner | `GET /public/v1/learners?mid&key&limit=10&query={"email":"<email>"}` |
+| Find by email | `GET /public/v1/learners?mid&key&limit=10&query={"email":"<email>"}` |
+| Find by mobile | `GET /public/v1/learners?mid&key&limit=10&query={"mobile":"+91..."}` |
 | Create learner | `POST /public/v1/learners` form body: `mid`, `key`, `email`, `name`, `mobile` (the buyer phone), `sendEmail=true` |
 | Assign course | `POST /public/v1/assign` form body: `mid`, `key`, `email`, `productId` |
 
-`productId` is `graphyCourseCode` from the catalog. Create does not return a learner id in the documented example (`{ "status": "success" }`); assign uses the email. `sendEmail=true` asks Graphy to email login details. No password is sent, so Graphy generates one.
+`productId` is `graphyCourseCode` from the catalog. Success is `{ "status": "success" }`. Graphy reports a business failure as HTTP 200 with `{ "error": { "code": 22, "message": "..." } }`, not `status: "failure"`. Create checks the mobile before the email.
+
+Enrollment:
+
+1. Look up the learner by email. If found, assign the course to that email and do not create anyone.
+2. If not found, create the learner with email, name, and mobile. Error code 22 (`Account exists for email : ...`) means the email is already registered; assign that email.
+3. Error code 25 (`This mobile number is already registered. Please use a different number.`) means the phone belongs to an existing account. Look that account up by mobile and assign the course to its email. The log warns with the payment email and the existing account email. If the mobile lookup finds nobody, enrollment fails and Graphy is not assigned.
+4. Any other create error fails the enrollment.
+
+`sendEmail=true` asks Graphy to email login details. No password is sent, so Graphy generates one. The phone is sent only when creating a learner; an existing account is not updated.
 
 The published Assign URL in that collection is the broken string `{/public/v1/assign`. This service calls `https://api.ongraphy.com/public/v1/assign`, matching the path segments and `POST /public/v1/unassign`.
 
 ### Is this learner already enrolled?
 
-`GET /public/v1/learners` and `GET /public/v1/learners/:id` accept `courseInfo=true`, described as “course progress and enrollment information”. Every example response in that collection is only email, id, name, mobile, and login dates. There is no sample course object and no field name.
+`GET /public/v1/learners?courseInfo=true` includes `courses` on the learner. Each entry looks like `{ "id": "<graphy product id>", "Title": "...", "Assigned Date": "...", "last access date": "..." }`. `id` is the product id. A learner with no courses has `courses: []`.
 
-Recovery still sends `courseInfo=true`. If the learner object has an array under `courses`, `enrollments`, `products`, or the other list names in `src/enrollmentCheck.js`, a matching product id means already enrolled and an empty list means not enrolled. If the list call has no such array, recovery loads the learner by id with `courseInfo=true` and looks again.
-
-If neither payload has a course list, enrollment is unknown. Recovery logs that and assigns anyway, because a paid learner with a failed webhook is the case this job exists for.
+Recovery resolves the learner the same way as enrollment: email first, then mobile when the email is absent. It skips the payment when that learner's `courses` contains the product id. An empty `courses` array means not enrolled. If the learner object has no `courses` field at all, recovery logs that and assigns anyway.
 
 `GET /t/api/public/v3/products/activelearners` was not used. It lists learners active between two dates, not everyone enrolled in the product.
 
 ## Recovery
 
-Each run asks Razorpay for payments created in the last `RECOVERY_WINDOW_MS` plus `RECOVERY_OVERLAP_MS` (defaults: 10 minutes and 2 minutes). Captured payments are kept. For each one the order notes supply the course and buyer, same as the webhook. A captured payment with a missing or invalid `buyerPhone` is not sent to Graphy. It is logged with the payment id, order id, course, and email, and counted as a failure. If Graphy shows the learner on that product, the payment is skipped. Otherwise the learner is enrolled, with the same Graphy retries, and create always sends the phone as `mobile`. One learner's failure is logged and the run continues. Nothing is written on this server.
+Each run asks Razorpay for payments created in the last `RECOVERY_WINDOW_MS` plus `RECOVERY_OVERLAP_MS` (defaults: 10 minutes and 2 minutes). Captured payments are kept. For each one the order notes supply the course and buyer, same as the webhook. A captured payment with a missing or invalid `buyerPhone` is not sent to Graphy. It is logged with the payment id, order id, course, and email, and counted as a failure. If the resolved learner already has this product id in `courses`, the payment is skipped. Otherwise the learner is enrolled with the same rules as the webhook, including error 22 and error 25. One learner's failure is logged and the run continues. Nothing is written on this server.
 
 The overlap means a payment that lands on the boundary is visible to two on-time runs. It does not cover a long outage: a payment older than the window is not revisited.
 
@@ -198,7 +206,8 @@ Covers webhook signature checks (including a body that no longer matches after r
 ## Limitations
 
 - INR only.
-- No stored idempotency. A second `payment.captured` for the same payment enrolls again. Whether Graphy treats a second assign as a no-op is not documented.
-- When Graphy omits the course list, recovery assigns even if the webhook already succeeded. With the default window and interval, that payment is only considered for about twelve minutes.
-- Create sends `sendEmail=true` and no password, so Graphy generates one and emails login details.
-- `buyerPhone` is required. A captured payment whose notes have no valid phone is not enrolled, and the webhook does not ask Razorpay to retry it. An existing Graphy learner is not updated with the phone; `mobile` is sent only when the learner is created.
+- No stored idempotency. A second `payment.captured` for the same payment enrolls again. Recovery will skip it only when `courses` already contains the product id.
+- If a learner object is missing `courses` entirely, recovery assigns anyway. With the default window and interval, a payment is only considered for about twelve minutes.
+- Create sends `sendEmail=true` and no password, so Graphy generates one and emails login details. An existing account is not updated with a new phone.
+- `buyerPhone` is required. A captured payment whose notes have no valid phone is not enrolled, and the webhook does not ask Razorpay to retry it.
+- Error 25 assigns the course to the Graphy account that already owns the phone, which can be a different email from the one on the payment.

@@ -94,22 +94,24 @@ export async function runRecovery({
     }
 
     try {
-      const enrolled = await graphy.isEnrolled(
-        purchase.buyer.email,
-        purchase.graphyCourseCode,
-      );
+      const enrolled = await graphy.isEnrolled({
+        email: purchase.buyer.email,
+        mobile: purchase.buyer.phone,
+        productId: purchase.graphyCourseCode,
+      });
       if (enrolled === true) {
         summary.alreadyEnrolled += 1;
         log.log("[recovery] learner already has the course", {
           paymentId: purchase.paymentId,
           email: purchase.buyer.email,
+          mobile: purchase.buyer.phone,
           graphyCourseCode: purchase.graphyCourseCode,
         });
         continue;
       }
       if (enrolled === null) {
         log.error(
-          "[recovery] Graphy did not return a course list; assigning anyway",
+          "[recovery] Graphy learner has no courses field; assigning anyway",
           {
             paymentId: purchase.paymentId,
             email: purchase.buyer.email,
@@ -118,13 +120,14 @@ export async function runRecovery({
         );
       }
 
-      await enrollLearner({
+      const enrollment = await enrollLearner({
         graphy,
         course: {
           courseCode: purchase.courseCode,
           graphyCourseCode: purchase.graphyCourseCode,
         },
         buyer: purchase.buyer,
+        log,
       });
       summary.enrolled += 1;
       log.log("[recovery] enrolled learner", {
@@ -132,7 +135,8 @@ export async function runRecovery({
         orderId: purchase.orderId,
         courseCode: purchase.courseCode,
         graphyCourseCode: purchase.graphyCourseCode,
-        email: purchase.buyer.email,
+        email: enrollment.assignedEmail,
+        paymentEmail: purchase.buyer.email,
       });
     } catch (err) {
       summary.failed += 1;
