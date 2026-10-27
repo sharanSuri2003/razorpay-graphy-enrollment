@@ -53,7 +53,6 @@ export function purchaseReady(purchase) {
     purchase?.paymentId &&
       purchase.courseCode &&
       purchase.graphyCourseCode &&
-      purchase.buyer?.email &&
       purchase.buyer?.name,
   );
 }

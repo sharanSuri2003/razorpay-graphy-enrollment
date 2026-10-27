@@ -12,6 +12,7 @@
  * {base}/public/v1/assign.
  */
 
+import { proxyEmail, suppliedEmail } from "./buyerEmail.js";
 import { enrollmentFromLearner } from "./enrollmentCheck.js";
 import { withRetry } from "./retry.js";
 
@@ -189,10 +190,27 @@ export function createGraphyClient({
    * true when the resolved learner's `courses` includes this product id.
    * false when nobody matches, or `courses` is present and does not include it.
    * null when the learner exists but `courses` itself is absent.
-   * Email is checked first. Mobile is the account create would hit on error 25.
+   *
+   * A buyer email is checked first, then mobile (the account create hits on
+   * error 25). With no buyer email, mobile is checked first, then the proxy
+   * address for that phone, matching enrollLearner.
    */
   async function isEnrolled({ email, mobile, productId }) {
-    const byEmail = await findLearnerByEmail(email, { courseInfo: true });
+    const provided = suppliedEmail({ email, phone: mobile });
+    if (!provided) {
+      if (mobile) {
+        const byMobile = await findLearnerByMobile(mobile, { courseInfo: true });
+        if (byMobile) return enrollmentFromLearner(byMobile, productId);
+      }
+      const proxy = proxyEmail(mobile);
+      if (proxy) {
+        const byProxy = await findLearnerByEmail(proxy, { courseInfo: true });
+        if (byProxy) return enrollmentFromLearner(byProxy, productId);
+      }
+      return false;
+    }
+
+    const byEmail = await findLearnerByEmail(provided, { courseInfo: true });
     if (byEmail) return enrollmentFromLearner(byEmail, productId);
     if (mobile) {
       const byMobile = await findLearnerByMobile(mobile, { courseInfo: true });

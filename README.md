@@ -68,13 +68,14 @@ curl -s -X POST http://localhost:3000/api/orders \
   -H 'Content-Type: application/json' \
   -d '{
     "courseCode": "CFBC",
-    "email": "learner@example.com",
     "name": "Asha Rao",
     "phone": "+919876543210"
   }'
 ```
 
-`phone` is required. It must include a country code (`+919876543210`), which is the form Graphy expects for `mobile`. A missing or invalid phone is `400` with an error message, and no Razorpay order is created.
+`name` and `phone` are required. `phone` must include a country code (`+919876543210`), which is the form Graphy expects for `mobile`. A missing or invalid phone is `400`, and no Razorpay order is created.
+
+`email` is optional. When the buyer sends one, it must be a valid address and is stored as `buyerEmail`. When they do not, the order notes have no `buyerEmail`. Graphy still needs an email, so enrollment uses `<digits>@indianfarmer.com`, digits only, including the country code: `+91 99999 00001` becomes `919999900001@indianfarmer.com`. The webhook and recovery both use that rule. An order that already has `buyerEmail` keeps that address.
 
 Response `201`:
 
@@ -100,13 +101,13 @@ Checkout (browser) uses that payload:
     amount: payload.amount,
     currency: payload.currency,
     name: "Courses",
-    prefill: { email: "learner@example.com", name: "Asha Rao", contact: "+919876543210" },
+    prefill: { name: "Asha Rao", contact: "+919876543210" },
   });
   checkout.open();
 </script>
 ```
 
-The order is created with notes the webhook reads later: `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone`.
+The order is created with notes the webhook reads later: `courseCode`, `graphyCourseCode`, `buyerName`, `buyerPhone`, and `buyerEmail` when the buyer sent one.
 
 ## Webhook
 
@@ -116,7 +117,7 @@ Razorpay calls this. Verify the signature against the **raw** body before trusti
 
 The only event that enrolls is `payment.captured`. Its payload has the payment only. Notes on the payment are often empty, so the handler loads the order with the Razorpay API and reads the notes saved at order creation. Every other event, including `order.paid`, is acknowledged with `200` and does not call Graphy.
 
-On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerEmail`, `buyerName`, and `buyerPhone` from the notes. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then enrolls the learner as described under Graphy calls. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again.
+On `payment.captured` the handler reads `courseCode`, `graphyCourseCode`, `buyerName`, `buyerPhone`, and `buyerEmail` when it was stored. If `graphyCourseCode` is missing it uses the catalog entry for `courseCode`. It then enrolls the learner as described under Graphy calls. There is no local record and no check that this payment was already handled, so a second `payment.captured` for the same payment enrolls again. A missing email does not stop enrollment: the handler builds the same proxy address recovery uses.
 
 If `buyerPhone` is missing or not a country-code number, the handler does not call Graphy. It logs the payment id, order id, course, and email, and responds `200` with `{ "ok": true, "skipped": true, "reason": "..." }`. A Razorpay retry cannot add a phone that was never stored on the order.
 
@@ -158,12 +159,18 @@ Documented in [Graphy REST API (24 Aug 2021)](https://documenter.getpostman.com/
 
 `productId` is `graphyCourseCode` from the catalog. Success is `{ "status": "success" }`. Graphy reports a business failure as HTTP 200 with `{ "error": { "code": 22, "message": "..." } }`, not `status: "failure"`. Create checks the mobile before the email.
 
-Enrollment:
+Enrollment when the order has a buyer email:
 
-1. Look up the learner by email. If found, assign the course to that email and do not create anyone.
-2. If not found, create the learner with email, name, and mobile. Error code 22 (`Account exists for email : ...`) means the email is already registered; assign that email.
+1. Look up the learner by that email. If found, assign the course to that email and do not create anyone.
+2. If not found, create the learner with that email, name, and mobile. Error code 22 (`Account exists for email : ...`) means the email is already registered; assign that email.
 3. Error code 25 (`This mobile number is already registered. Please use a different number.`) means the phone belongs to an existing account. Look that account up by mobile and assign the course to its email. The log warns with the payment email and the existing account email. If the mobile lookup finds nobody, enrollment fails and Graphy is not assigned.
 4. Any other create error fails the enrollment.
+
+Enrollment when the order has no buyer email:
+
+1. Look up the learner by mobile first. If found, assign the course to that account's email and do not create a proxy account. The log warns with the phone and the existing email.
+2. If the phone is new, create `<digits>@indianfarmer.com` with the buyer's name and mobile. Error 22 assigns that proxy email. Error 25 falls through to the mobile account, same as above.
+3. Older orders that already stored `buyerEmail` keep using that email, including when it is not the proxy address.
 
 `sendEmail=true` asks Graphy to email login details. No password is sent, so Graphy generates one. The phone is sent only when creating a learner; an existing account is not updated.
 
@@ -173,7 +180,7 @@ The published Assign URL in that collection is the broken string `{/public/v1/as
 
 `GET /public/v1/learners?courseInfo=true` includes `courses` on the learner. Each entry looks like `{ "id": "<graphy product id>", "Title": "...", "Assigned Date": "...", "last access date": "..." }`. `id` is the product id. A learner with no courses has `courses: []`.
 
-Recovery resolves the learner the same way as enrollment: email first, then mobile when the email is absent. It skips the payment when that learner's `courses` contains the product id. An empty `courses` array means not enrolled. If the learner object has no `courses` field at all, recovery logs that and assigns anyway.
+Recovery resolves the learner the same way as enrollment. With a buyer email, it checks that email and then the mobile. With no buyer email, it checks the mobile first and then the proxy address, so a course on either account is recognized. It skips the payment when that learner's `courses` contains the product id. An empty `courses` array means not enrolled. If the learner object has no `courses` field at all, recovery logs that and assigns anyway.
 
 `GET /t/api/public/v3/products/activelearners` was not used. It lists learners active between two dates, not everyone enrolled in the product.
 
@@ -210,4 +217,5 @@ Covers webhook signature checks (including a body that no longer matches after r
 - If a learner object is missing `courses` entirely, recovery assigns anyway. With the default window and interval, a payment is only considered for about twelve minutes.
 - Create sends `sendEmail=true` and no password, so Graphy generates one and emails login details. An existing account is not updated with a new phone.
 - `buyerPhone` is required. A captured payment whose notes have no valid phone is not enrolled, and the webhook does not ask Razorpay to retry it.
-- Error 25 assigns the course to the Graphy account that already owns the phone, which can be a different email from the one on the payment.
+- Error 25, and a phone-only buyer whose number is already registered, assigns the course to the Graphy account that owns the phone. That email can differ from the payment.
+- A buyer who gave no email is created as `<digits>@indianfarmer.com` only when that phone is not already on a Graphy account. `sendEmail=true` still asks Graphy to mail login details, and that proxy address is not a real inbox.

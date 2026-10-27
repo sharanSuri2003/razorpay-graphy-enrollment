@@ -132,6 +132,78 @@ test("isEnrolled reads courses from the email lookup, then the mobile lookup", a
   ]);
 });
 
+test("isEnrolled checks the phone account before the proxy email", async () => {
+  const seen = [];
+  const graphy = createGraphyClient({
+    graphyMerchantId: "mid",
+    graphyApiToken: "token",
+    graphyApiBaseUrl: "https://api.ongraphy.com",
+    retryAttempts: 1,
+    sleep: async () => {},
+    fetchImpl: async (url) => {
+      const parsed = new URL(String(url));
+      const query = JSON.parse(parsed.searchParams.get("query"));
+      seen.push(query);
+      let data = [];
+      if (query.mobile === "+919999900001") {
+        data = [
+          {
+            email: "real@example.com",
+            mobile: "+919999900001",
+            courses: [{ id: "prod_intro_1" }],
+          },
+        ];
+      } else if (query.email === "918888877777@indianfarmer.com") {
+        data = [
+          {
+            email: "918888877777@indianfarmer.com",
+            courses: [{ id: "prod_intro_1" }],
+          },
+        ];
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        async text() {
+          return JSON.stringify({ data, total: data.length });
+        },
+      };
+    },
+  });
+
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "",
+      mobile: "+919999900001",
+      productId: "prod_intro_1",
+    }),
+    true,
+  );
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "919999900001@indianfarmer.com",
+      mobile: "+919999900001",
+      productId: "prod_intro_1",
+    }),
+    true,
+  );
+  assert.equal(
+    await graphy.isEnrolled({
+      email: "",
+      mobile: "+918888877777",
+      productId: "prod_intro_1",
+    }),
+    true,
+  );
+  assert.deepEqual(seen, [
+    { mobile: "+919999900001" },
+    { mobile: "+919999900001" },
+    { mobile: "+918888877777" },
+    { email: "918888877777@indianfarmer.com" },
+  ]);
+});
+
 test("recovery enrolls captured payments that are not already on the course", async () => {
   const calls = [];
   const pages = [];
@@ -240,5 +312,81 @@ test("recovery enrolls captured payments that are not already on the course", as
   assert.equal(
     calls.some((call) => String(call.email).endsWith("phone@example.com")),
     false,
+  );
+});
+
+test("recovery uses the mobile account for a phone-only buyer", async () => {
+  const calls = [];
+  const phoneNotes = {
+    courseCode: "EXAMPLE-INTRO",
+    graphyCourseCode: "prod_intro_1",
+    buyerName: "Asha Rao",
+    buyerPhone: "+919999900001",
+  };
+  const razorpay = {
+    payments: {
+      async all() {
+        return {
+          items: [
+            captured("pay_known_phone", phoneNotes),
+            captured("pay_new_phone", { ...phoneNotes, buyerPhone: "+918888877777" }),
+          ],
+        };
+      },
+    },
+    orders: {
+      async fetch(orderId) {
+        calls.push({ op: "fetch", orderId });
+        const phone = orderId.endsWith("pay_new_phone") ? "+918888877777" : "+919999900001";
+        return { id: orderId, notes: { ...phoneNotes, buyerPhone: phone } };
+      },
+    },
+  };
+  const graphy = {
+    async isEnrolled({ email, mobile, productId }) {
+      calls.push({ op: "isEnrolled", email, mobile, productId });
+      return mobile === "+919999900001";
+    },
+    async findLearnerByMobile(mobile) {
+      calls.push({ op: "findMobile", mobile });
+      return null;
+    },
+    async findLearnerByEmail() {
+      throw new Error("proxy buyers are created without an email lookup");
+    },
+    async createLearner(input) {
+      calls.push({ op: "create", email: input.email, mobile: input.mobile });
+      return { status: "success" };
+    },
+    async assignCourse(input) {
+      calls.push({ op: "assign", email: input.email });
+      return { status: "success" };
+    },
+  };
+
+  const summary = await runRecovery({
+    config: testConfig(),
+    razorpay,
+    graphy,
+    courses: catalog,
+    now: () => new Date("2026-06-01T12:00:00.000Z"),
+    log: { log() {}, error() {}, warn() {} },
+  });
+
+  assert.equal(summary.scanned, 2);
+  assert.equal(summary.alreadyEnrolled, 1);
+  assert.equal(summary.enrolled, 1);
+  assert.equal(summary.failed, 0);
+  assert.deepEqual(
+    calls.filter((call) => call.op === "isEnrolled").map((call) => call.email),
+    ["", ""],
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.op === "create").map((call) => call.email),
+    ["918888877777@indianfarmer.com"],
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.op === "assign").map((call) => call.email),
+    ["918888877777@indianfarmer.com"],
   );
 });
