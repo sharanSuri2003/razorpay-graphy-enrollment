@@ -1,3 +1,4 @@
+import { notifyPurchase } from "./aisensy.js";
 import { enrollLearner } from "./enroll.js";
 import { buyerPhoneError, purchaseReady, resolvePurchase } from "./purchase.js";
 
@@ -37,6 +38,7 @@ export async function runRecovery({
   razorpay,
   graphy,
   courses,
+  aisensy,
   now = () => new Date(),
   log = console,
 }) {
@@ -137,6 +139,16 @@ export async function runRecovery({
         graphyCourseCode: purchase.graphyCourseCode,
         email: enrollment.assignedEmail,
         paymentEmail: purchase.buyer.email,
+      });
+      await notifyPurchase({
+        aisensy,
+        course: courses.findByCode(purchase.courseCode) ?? {
+          courseCode: purchase.courseCode,
+          graphyCourseCode: purchase.graphyCourseCode,
+        },
+        buyer: purchase.buyer,
+        paymentId: purchase.paymentId,
+        log,
       });
     } catch (err) {
       summary.failed += 1;

@@ -31,7 +31,7 @@ export function isRetryableGraphyError(err) {
   return true;
 }
 
-export async function withRetry(fn, { attempts, baseDelayMs, sleep, label }) {
+export async function withRetry(fn, { attempts, baseDelayMs, sleep, label, prefix = "graphy" }) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -39,7 +39,7 @@ export async function withRetry(fn, { attempts, baseDelayMs, sleep, label }) {
     } catch (err) {
       lastError = err;
       const retryable = isRetryableGraphyError(err);
-      console.error(`[graphy] ${label} failed`, {
+      console.error(`[${prefix}] ${label} failed`, {
         attempt,
         attempts,
         retryable,

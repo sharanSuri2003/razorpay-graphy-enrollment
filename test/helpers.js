@@ -22,6 +22,11 @@ export function testConfig(overrides = {}) {
     recoveryIntervalMs: 600_000,
     recoveryWindowMs: 600_000,
     recoveryOverlapMs: 120_000,
+    aisensyApiKey: "",
+    aisensyCampaignName: "kropiq_purchase",
+    aisensySource: "new-landing-page form",
+    aisensyApiUrl: "https://backend.aisensy.com/campaign/t1/api/v2",
+    aisensyGuideVideoUrl: "",
     ...overrides,
   };
 }

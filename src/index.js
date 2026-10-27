@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createAiSensyClient } from "./aisensy.js";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { loadCourses } from "./courses.js";
@@ -16,7 +17,8 @@ const graphy = createGraphyClient({
   requestTimeoutMs: config.graphyRequestTimeoutMs,
 });
 
-const app = createApp({ config, courses, razorpay, graphy });
+const aisensy = createAiSensyClient(config);
+const app = createApp({ config, courses, razorpay, graphy, aisensy });
 
 const server = app.listen(config.port, () => {
   console.log(`Listening on port ${config.port}`);
@@ -24,7 +26,7 @@ const server = app.listen(config.port, () => {
 
 if (config.recoveryEnabled) {
   const run = () => {
-    runRecovery({ config, razorpay, graphy, courses }).catch((err) => {
+    runRecovery({ config, razorpay, graphy, courses, aisensy }).catch((err) => {
       console.error("[recovery] run failed", { message: err.message });
     });
   };

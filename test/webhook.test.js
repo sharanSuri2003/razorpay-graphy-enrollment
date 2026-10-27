@@ -55,7 +55,7 @@ function graphyMock() {
   };
 }
 
-async function withApp(fn) {
+async function withApp(fn, { aisensy } = {}) {
   const graphy = graphyMock();
   const fetched = [];
   let orderNotes = notes;
@@ -76,6 +76,7 @@ async function withApp(fn) {
     courses: catalog,
     razorpay,
     graphy: graphy.client,
+    aisensy,
   });
   const server = await listen(app);
   try {
@@ -302,6 +303,62 @@ test("rejects a bad signature and ignores unrelated events", async () => {
     assert.equal(graphy.calls.length, 0);
     assert.equal(fetched.length, 0);
   });
+});
+
+test("sends WhatsApp only after enrollment and still returns 200 if AiSensy fails", async () => {
+  const sent = [];
+  let attempts = 0;
+  const failing = {
+    async sendPurchaseConfirmation(input) {
+      attempts += 1;
+      sent.push(input.paymentId);
+      throw new Error("AiSensy failed (503): down");
+    },
+  };
+  await withApp(
+    async ({ server }) => {
+      const event = {
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: { id: "pay_wa", order_id: "order_wa", status: "captured", notes },
+          },
+        },
+      };
+      const result = await postWebhook(server.url, event);
+      assert.equal(result.response.status, 200);
+      assert.equal(result.body.enrolled, true);
+      assert.equal(attempts, 1);
+      assert.deepEqual(sent, ["pay_wa"]);
+    },
+    { aisensy: failing },
+  );
+
+  const failedSends = [];
+  const recording = {
+    async sendPurchaseConfirmation(input) {
+      failedSends.push(input.paymentId);
+      return { skipped: false, destination: "919876543210" };
+    },
+  };
+  await withApp(
+    async ({ server, graphy }) => {
+      graphy.client.assignCourse = async () => {
+        throw new Error("Graphy assign course failed (503): unavailable");
+      };
+      const failed = await postWebhook(server.url, {
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: { id: "pay_no", order_id: "order_no", status: "captured", notes },
+          },
+        },
+      });
+      assert.equal(failed.response.status, 500);
+      assert.deepEqual(failedSends, []);
+    },
+    { aisensy: recording },
+  );
 });
 
 test("returns 500 when Graphy assign fails and a later delivery tries again", async () => {
