@@ -37,6 +37,11 @@ The process listens on `PORT` (default `3000`). It does not store payments or en
 | `RECOVERY_OVERLAP_MS` | no | Extra lookback so a payment on the window edge is seen again. Default `120000`. |
 | `CORS_ORIGIN` | no | Comma-separated browser origins. A request whose `Origin` exactly matches one of them gets that origin in `Access-Control-Allow-Origin`, with `Vary: Origin`. Any other origin gets no CORS allow header. Example: `CORS_ORIGIN=https://kropiq.in,https://www.kropiq.in`. |
 | `COURSES_PATH` | no | Catalog file. Default `data/courses.json`. |
+| `AISENSY_API_KEY` | no | AiSensy API key. When unset, enrollment still succeeds and no WhatsApp message is sent. |
+| `AISENSY_CAMPAIGN_NAME` | no | AiSensy campaign. Default `kropiq_purchase`. |
+| `AISENSY_SOURCE` | no | AiSensy `source`. Default `new-landing-page form`. |
+| `AISENSY_API_URL` | no | Default `https://backend.aisensy.com/campaign/t1/api/v2`. |
+| `AISENSY_GUIDE_VIDEO_URL` | no | Guidance video for template parameter 5. A course `guideVideoUrl` wins. The message is skipped when neither is set. |
 
 Relative paths are resolved from the project root.
 
@@ -50,6 +55,8 @@ Relative paths are resolved from the project root.
 | `graphyCourseCode` | Graphy **product id** of the course or package. Sent as `productId` to `POST /public/v1/assign`. |
 | `name` | Display name. |
 | `price` | Price in **INR rupees** (up to 2 decimal places, for example `1999` or `1999.50`). The client never sends the price. |
+| `accessUrl` | Optional course link sent in the WhatsApp confirmation. When omitted, the link is `https://login.indianfarmer.com/s/courses/<graphyCourseCode>/info`. |
+| `guideVideoUrl` | Optional guidance video for that course. Overrides `AISENSY_GUIDE_VIDEO_URL`. |
 
 The file is the live catalog. Only these courses can be bought. Razorpay is charged in paise (`price * 100`), currency `INR`.
 
@@ -200,7 +207,21 @@ Two ways to run it. Use one of them, not both, or the same payment can be assign
 */10 * * * * cd /path/to/app && npm run recover
 ```
 
-`npm run recover` runs one pass and exits. Exit code is `1` when any payment in that pass failed (notes could not be read, `buyerPhone` was missing or invalid, or Graphy still failed after retries). Individual failures are logged with payment id, course, and email.
+`npm run recover` runs one pass and exits. Exit code is `1` when any payment in that pass failed (notes could not be read, `buyerPhone` was missing or invalid, or Graphy still failed after retries). A WhatsApp failure does not count. Individual failures are logged with payment id, course, and email.
+
+## WhatsApp confirmation
+
+After this run enrolls the learner on Graphy, the webhook and recovery each POST the approved `kropiq_purchase` template to AiSensy. Buyers who already have the course are not messaged again by recovery. The API key is never written to the logs.
+
+`destination` is the buyer phone as digits with the country code, no `+`. `userName` is the buyer's name, or `user`. Template parameters, in order:
+
+1. First name, or `user`.
+2. Buyer phone, as stored (including `+`).
+3. Razorpay payment id.
+4. Course access link: `accessUrl` from the catalog, otherwise `https://login.indianfarmer.com/s/courses/<graphyCourseCode>/info`.
+5. Guidance video: the course `guideVideoUrl`, otherwise `AISENSY_GUIDE_VIDEO_URL`.
+
+AiSensy calls use the same retry rules as Graphy (network errors, timeouts, HTTP 429, and HTTP 5xx). A failed or skipped WhatsApp message is logged and does not change the webhook status or cause another Graphy assign.
 
 ## Tests
 
@@ -219,3 +240,5 @@ Covers webhook signature checks (including a body that no longer matches after r
 - `buyerPhone` is required. A captured payment whose notes have no valid phone is not enrolled, and the webhook does not ask Razorpay to retry it.
 - Error 25, and a phone-only buyer whose number is already registered, assigns the course to the Graphy account that owns the phone. That email can differ from the payment.
 - A buyer who gave no email is created as `<digits>@indianfarmer.com` only when that phone is not already on a Graphy account. `sendEmail=true` still asks Graphy to mail login details, and that proxy address is not a real inbox.
+- A second `payment.captured` for the same payment enrolls again and can send the WhatsApp confirmation again. Recovery does not resend it once `courses` contains the product id.
+- The guidance video URL is not set in this repo. Until `AISENSY_GUIDE_VIDEO_URL` or a course `guideVideoUrl` is set, the confirmation is skipped.

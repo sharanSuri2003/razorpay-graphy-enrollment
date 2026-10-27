@@ -23,6 +23,14 @@ function requiredString(value, label) {
   return value.trim();
 }
 
+function optionalString(value, label) {
+  if (value == null || value === "") return "";
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  return value.trim();
+}
+
 export function createCatalog(entries) {
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new Error("Course catalog must be a non-empty JSON array");
@@ -55,6 +63,8 @@ export function createCatalog(entries) {
       price: entry.price,
       currency: CURRENCY,
       amount,
+      accessUrl: optionalString(entry.accessUrl, `accessUrl for ${courseCode}`),
+      guideVideoUrl: optionalString(entry.guideVideoUrl, `guideVideoUrl for ${courseCode}`),
     });
   }
 

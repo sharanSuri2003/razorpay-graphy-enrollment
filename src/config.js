@@ -105,5 +105,12 @@ export function loadConfig(env = process.env) {
       "RECOVERY_OVERLAP_MS",
       { min: 0, max: 60 * 60 * 1000 },
     ),
+    aisensyApiKey: String(env.AISENSY_API_KEY ?? "").trim(),
+    aisensyCampaignName: String(env.AISENSY_CAMPAIGN_NAME ?? "").trim() || "kropiq_purchase",
+    aisensySource: String(env.AISENSY_SOURCE ?? "").trim() || "new-landing-page form",
+    aisensyApiUrl:
+      String(env.AISENSY_API_URL ?? "").trim() ||
+      "https://backend.aisensy.com/campaign/t1/api/v2",
+    aisensyGuideVideoUrl: String(env.AISENSY_GUIDE_VIDEO_URL ?? "").trim(),
   };
 }

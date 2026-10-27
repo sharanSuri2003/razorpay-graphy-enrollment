@@ -1,3 +1,4 @@
+import { notifyPurchase } from "./aisensy.js";
 import { enrollLearner } from "./enroll.js";
 import { buyerPhoneError, purchaseReady, resolvePurchase } from "./purchase.js";
 import { verifyWebhookSignature } from "./signature.js";
@@ -16,7 +17,7 @@ function parsePayload(rawBody) {
   }
 }
 
-export function createWebhookHandler({ config, courses, razorpay, graphy }) {
+export function createWebhookHandler({ config, courses, razorpay, graphy, aisensy }) {
   return async function webhook(req, res) {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
     if (!rawBody) {
@@ -97,6 +98,15 @@ export function createWebhookHandler({ config, courses, razorpay, graphy }) {
         graphyCourseCode: purchase.graphyCourseCode,
         email: enrollment.assignedEmail,
         paymentEmail: purchase.buyer.email,
+      });
+      await notifyPurchase({
+        aisensy,
+        course: courses.findByCode(purchase.courseCode) ?? {
+          courseCode: purchase.courseCode,
+          graphyCourseCode: purchase.graphyCourseCode,
+        },
+        buyer: purchase.buyer,
+        paymentId: purchase.paymentId,
       });
       return res.status(200).json({ ok: true, enrolled: true });
     } catch (err) {

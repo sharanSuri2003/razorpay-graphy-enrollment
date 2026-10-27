@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createAiSensyClient } from "./aisensy.js";
 import { loadConfig } from "./config.js";
 import { loadCourses } from "./courses.js";
 import { createGraphyClient } from "./graphyClient.js";
@@ -17,6 +18,7 @@ const summary = await runRecovery({
     retryBaseDelayMs: config.graphyRetryBaseDelayMs,
     requestTimeoutMs: config.graphyRequestTimeoutMs,
   }),
+  aisensy: createAiSensyClient(config),
 });
 
 process.exit(summary.failed > 0 ? 1 : 0);

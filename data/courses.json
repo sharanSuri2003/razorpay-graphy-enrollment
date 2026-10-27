@@ -3,18 +3,21 @@
     "courseCode": "CFBC",
     "graphyCourseCode": "69982bc4537633302dc0288e",
     "name": "Capsicum Farming Business Course",
-    "price": 1999
+    "price": 1999,
+    "accessUrl": "https://login.indianfarmer.com/s/courses/69982bc4537633302dc0288e/info"
   },
   {
     "courseCode": "HSFBC",
     "graphyCourseCode": "68c7a2dce149ff7f37b37bbe",
     "name": "How to Start Farming Business Course",
-    "price": 2499
+    "price": 2499,
+    "accessUrl": "https://login.indianfarmer.com/s/courses/68c7a2dce149ff7f37b37bbe/info"
   },
   {
     "courseCode": "TFBC",
     "graphyCourseCode": "66545e24563c562bd7c7fa3b",
     "name": "Tomato Farming Business Course",
-    "price": 1999
+    "price": 1999,
+    "accessUrl": "https://login.indianfarmer.com/s/courses/66545e24563c562bd7c7fa3b/info"
   }
 ]
