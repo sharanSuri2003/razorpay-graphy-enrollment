@@ -97,7 +97,7 @@ test("creates an order from the catalog price and stores buyer notes", async () 
   });
 });
 
-test("rejects an unknown course and a missing email", async () => {
+test("rejects an unknown course and a missing phone", async () => {
   await withApp(async ({ server, razorpay }) => {
     const unknown = await fetch(`${server.url}/api/orders`, {
       method: "POST",
@@ -155,5 +155,36 @@ test("requires a phone with a country code and stores it on the order", async ()
     });
     assert.equal(created.status, 201);
     assert.equal(razorpay.created[0].notes.buyerPhone, "+919876543210");
+  });
+});
+
+test("accepts an order with no email and rejects an invalid one", async () => {
+  await withApp(async ({ server, razorpay }) => {
+    const created = await fetch(`${server.url}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        courseCode: "EXAMPLE-INTRO",
+        name: "Asha Rao",
+        phone: "+919999900001",
+      }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(razorpay.created[0].notes.buyerPhone, "+919999900001");
+    assert.equal("buyerEmail" in razorpay.created[0].notes, false);
+
+    const invalid = await fetch(`${server.url}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        courseCode: "EXAMPLE-INTRO",
+        email: "not-an-email",
+        name: "Asha Rao",
+        phone: "+919999900001",
+      }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.match((await invalid.json()).error, /email must be a valid address/);
+    assert.equal(razorpay.created.length, 1);
   });
 });

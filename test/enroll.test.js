@@ -111,6 +111,82 @@ test("assigns the existing mobile account when create returns error 25", async (
   assert.equal(warnings[0].details.existingEmail, "existing@example.com");
 });
 
+test("assigns the phone's existing account when the buyer gave no email", async () => {
+  const warnings = [];
+  const calls = [];
+  const graphy = {
+    async findLearnerByEmail() {
+      throw new Error("email lookup should not run before the mobile account is found");
+    },
+    async findLearnerByMobile(mobile) {
+      calls.push({ op: "findMobile", mobile });
+      return { email: "real@example.com", mobile };
+    },
+    async createLearner() {
+      throw new Error("create should not run");
+    },
+    async assignCourse(input) {
+      calls.push({ op: "assign", email: input.email });
+      return { status: "success" };
+    },
+  };
+
+  const result = await enrollLearner({
+    graphy,
+    course,
+    buyer: { name: "Asha Rao", phone: "+91 99999 00001" },
+    log: {
+      log() {},
+      warn(message, details) {
+        warnings.push({ message, details });
+      },
+    },
+  });
+
+  assert.equal(result.assignedEmail, "real@example.com");
+  assert.deepEqual(calls, [
+    { op: "findMobile", mobile: "+91 99999 00001" },
+    { op: "assign", email: "real@example.com" },
+  ]);
+  assert.equal(warnings[0].details.paymentEmail, null);
+  assert.equal(warnings[0].details.existingEmail, "real@example.com");
+});
+
+test("creates a proxy email when the buyer gave no email and the phone is new", async () => {
+  const calls = [];
+  const graphy = {
+    async findLearnerByMobile() {
+      calls.push("findMobile");
+      return null;
+    },
+    async findLearnerByEmail() {
+      throw new Error("email lookup should not run when creating the proxy");
+    },
+    async createLearner(input) {
+      calls.push(`create:${input.email}`);
+      return { status: "success" };
+    },
+    async assignCourse(input) {
+      calls.push(`assign:${input.email}`);
+      return { status: "success" };
+    },
+  };
+
+  const result = await enrollLearner({
+    graphy,
+    course,
+    buyer: { name: "Asha Rao", phone: "+91 99999 00001" },
+    log: { log() {}, warn() {} },
+  });
+
+  assert.equal(result.assignedEmail, "919999900001@indianfarmer.com");
+  assert.deepEqual(calls, [
+    "findMobile",
+    "create:919999900001@indianfarmer.com",
+    "assign:919999900001@indianfarmer.com",
+  ]);
+});
+
 test("fails when error 25 has no learner for that mobile", async () => {
   const graphy = {
     async findLearnerByEmail() {

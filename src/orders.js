@@ -21,8 +21,8 @@ export function createOrderHandler({ courses, razorpay }) {
     if (!courseCode) {
       return res.status(400).json({ error: "courseCode is required" });
     }
-    if (!email || !EMAIL_RE.test(email) || email.length > 254) {
-      return res.status(400).json({ error: "A valid email is required" });
+    if (email && (!EMAIL_RE.test(email) || email.length > 254)) {
+      return res.status(400).json({ error: "email must be a valid address" });
     }
     if (!name || name.length > 120) {
       return res.status(400).json({ error: "name is required (max 120 characters)" });
@@ -41,10 +41,10 @@ export function createOrderHandler({ courses, razorpay }) {
     const notes = {
       courseCode: course.courseCode,
       graphyCourseCode: course.graphyCourseCode,
-      buyerEmail: email,
       buyerName: name,
       buyerPhone: phone,
     };
+    if (email) notes.buyerEmail = email;
 
     try {
       const order = await razorpay.orders.create({

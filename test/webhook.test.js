@@ -24,15 +24,23 @@ const notes = {
 function graphyMock() {
   const calls = [];
   let learners = [];
+  let mobileLearner = null;
   return {
     calls,
     setLearners(next) {
       learners = next;
     },
+    setMobileLearner(next) {
+      mobileLearner = next;
+    },
     client: {
       async findLearnerByEmail(email) {
         calls.push({ op: "find", email });
         return learners.find((learner) => learner.email === email) ?? null;
+      },
+      async findLearnerByMobile(mobile) {
+        calls.push({ op: "findMobile", mobile });
+        return mobileLearner;
       },
       async createLearner(input) {
         calls.push({ op: "create", input });
@@ -207,6 +215,61 @@ test("does not call Graphy when buyerPhone is missing or invalid", async () => {
     assert.match(invalid.body.reason, /country code/);
     assert.deepEqual(fetched, ["order_nophone", "order_badphone"]);
     assert.equal(graphy.calls.length, 0);
+  });
+});
+
+test("enrolls a phone-only buyer on the account that already has that mobile", async () => {
+  await withApp(async ({ server, graphy, setOrderNotes }) => {
+    const phoneOnly = {
+      courseCode: "EXAMPLE-INTRO",
+      graphyCourseCode: "prod_intro_1",
+      buyerName: "Asha Rao",
+      buyerPhone: "+919999900001",
+    };
+    setOrderNotes(phoneOnly);
+    graphy.setMobileLearner({ email: "real@example.com", mobile: "+919999900001" });
+
+    const existing = await postWebhook(server.url, {
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_phone",
+            order_id: "order_phone",
+            status: "captured",
+            notes: [],
+          },
+        },
+      },
+    });
+    assert.equal(existing.response.status, 200);
+    assert.equal(existing.body.enrolled, true);
+    assert.deepEqual(
+      graphy.calls.map((call) => call.op),
+      ["findMobile", "assign"],
+    );
+    assert.equal(graphy.calls[1].input.email, "real@example.com");
+
+    graphy.setMobileLearner(null);
+    graphy.calls.length = 0;
+    const created = await postWebhook(server.url, {
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_proxy",
+            order_id: "order_proxy",
+            status: "captured",
+            notes: phoneOnly,
+          },
+        },
+      },
+    });
+    assert.equal(created.response.status, 200);
+    assert.equal(created.body.enrolled, true);
+    assert.equal(graphy.calls[1].input.email, "919999900001@indianfarmer.com");
+    assert.equal(graphy.calls[1].input.mobile, "+919999900001");
+    assert.equal(graphy.calls[2].input.email, "919999900001@indianfarmer.com");
   });
 });
 
